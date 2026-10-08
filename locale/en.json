@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Channels and Sessions",
+    "description": "Cross-channel identity, session routing, input policy and durable deduplication."
+  }
+}

@@ -1,0 +1,649 @@
+{
+  "dsh-channel-discord": {
+    "rowId": "channel-discord",
+    "endpoint": "discordChannelSettings",
+    "title": "Discord 渠道",
+    "description": "将 Discord 消息接入 DSH 原生会话，支持线程、交互和渠道设置。",
+    "standalone": true,
+    "actionLabel": "重新连接",
+    "credentialFields": {
+      "tokenRef": "Discord Bot Token"
+    },
+    "fields": [
+      {
+        "key": "enabled",
+        "label": "连接渠道",
+        "type": "boolean",
+        "help": "保存后自动连接；有效凭证用于登录，消息接收范围单独配置。",
+        "group": "账号与连接",
+        "advanced": false
+      },
+      {
+        "key": "dmPolicy",
+        "group": "接收范围",
+        "label": "私聊接收范围",
+        "type": "select",
+        "options": [
+          [
+            "disabled",
+            "关闭私聊"
+          ],
+          [
+            "allowlist",
+            "仅指定用户"
+          ],
+          [
+            "all",
+            "所有私聊用户"
+          ]
+        ],
+        "help": "与服务器范围分别设置；选择所有私聊用户后无需填写用户 ID，各用户的私聊会话独立。",
+        "advanced": false
+      },
+      {
+        "key": "allowGroups",
+        "group": "接收范围",
+        "label": "接收服务器消息",
+        "type": "boolean",
+        "advanced": false
+      },
+      {
+        "key": "groupPolicy",
+        "group": "接收范围",
+        "label": "服务器接收范围",
+        "type": "select",
+        "options": [
+          [
+            "allowlist",
+            "指定允许的用户和频道"
+          ],
+          [
+            "all",
+            "服务器内所有用户、所有频道"
+          ]
+        ],
+        "help": "只应用于服务器消息；私聊由私聊接收范围单独设置。",
+        "when": {
+          "allowGroups": true
+        },
+        "advanced": false
+      },
+      {
+        "key": "requireMention",
+        "group": "接收范围",
+        "label": "服务器消息需要 @ 机器人",
+        "type": "boolean",
+        "when": {
+          "allowGroups": true
+        },
+        "advanced": false
+      },
+      {
+        "key": "allowedUsers",
+        "group": "接收范围",
+        "label": "允许使用的用户 ID",
+        "type": "list",
+        "help": "私聊选择指定用户、服务器选择指定范围时使用，每行一个；选择全部范围时无需填写。",
+        "when": [
+          {
+            "dmPolicy": "allowlist"
+          },
+          {
+            "allowGroups": true,
+            "groupPolicy": "allowlist"
+          }
+        ],
+        "emptyHelp": "指定用户模式需要填写用户 ID，空列表暂不接收消息。",
+        "advanced": false
+      },
+      {
+        "key": "allowedGroups",
+        "group": "接收范围",
+        "label": "允许的频道 ID",
+        "type": "list",
+        "help": "指定范围时使用，每行一个频道 ID；选择全部范围时无需填写。",
+        "when": {
+          "allowGroups": true,
+          "groupPolicy": "allowlist"
+        },
+        "emptyHelp": "指定频道模式需要填写频道 ID，空列表暂不接收服务器消息。",
+        "advanced": false
+      },
+      {
+        "key": "streaming.mode",
+        "group": "回复显示",
+        "label": "回复显示方式",
+        "type": "select",
+        "options": [
+          [
+            "progress",
+            "执行进度（progress）"
+          ],
+          [
+            "partial",
+            "实时正文（partial）"
+          ],
+          [
+            "off",
+            "仅最终回复（off）"
+          ]
+        ],
+        "help": "执行进度更新同一条消息，完成后显示完整回答。",
+        "advanced": false
+      },
+      {
+        "key": "accountId",
+        "label": "账号标识",
+        "type": "text",
+        "help": "本地用于区分机器人账号，配置后保持稳定。",
+        "group": "账号与连接",
+        "advanced": true
+      },
+      {
+        "key": "applicationId",
+        "type": "readonly",
+        "label": "应用 ID（自动识别）",
+        "detail": "applicationId",
+        "placeholder": "连接后自动识别",
+        "help": "根据 Bot Token 识别对应应用。",
+        "group": "账号与连接",
+        "advanced": true
+      },
+      {
+        "key": "tokenRef",
+        "label": "凭证名称",
+        "type": "text",
+        "help": "Bot Token 在上方机器人凭证区保存。",
+        "group": "账号与连接",
+        "advanced": true
+      },
+      {
+        "key": "registerCommands",
+        "label": "注册 /dsh 指令",
+        "group": "会话与输入",
+        "type": "boolean",
+        "help": "连接后自动添加 /dsh；保留该机器人已有的其他指令。",
+        "advanced": true
+      },
+      {
+        "key": "inputMode",
+        "group": "会话与输入",
+        "label": "新消息输入方式",
+        "type": "select",
+        "options": [
+          [
+            "inherit",
+            "跟随“渠道与会话”设置"
+          ],
+          [
+            "steering",
+            "Steering：加入当前任务"
+          ],
+          [
+            "queue",
+            "Queue：排入后续轮次"
+          ],
+          [
+            "interrupt",
+            "Interrupt：停止当前轮次并接收新输入"
+          ]
+        ],
+        "advanced": true
+      },
+      {
+        "key": "agentPreset",
+        "group": "会话与输入",
+        "label": "Agent 预设 ID",
+        "type": "text",
+        "advanced": true
+      },
+      {
+        "key": "workspacePath",
+        "group": "会话与输入",
+        "label": "工作区路径",
+        "type": "text",
+        "help": "留空跟随客户端已登记的默认工作区；填写后使用指定目录。",
+        "advanced": true
+      },
+      {
+        "key": "resolvedWorkspace",
+        "label": "实际工作区",
+        "type": "readonly",
+        "detail": "workspacePath",
+        "placeholder": "渠道连接后显示",
+        "group": "会话与输入",
+        "advanced": true,
+        "help": "显示渠道新会话实际使用的目录。"
+      },
+      {
+        "key": "memoryNamespace",
+        "group": "会话与输入",
+        "label": "记忆命名空间",
+        "type": "text",
+        "advanced": true
+      },
+      {
+        "key": "ownerMode",
+        "group": "主人与记忆",
+        "label": "主人认领方式",
+        "type": "select",
+        "options": [
+          [
+            "first-dm",
+            "首次私聊自动认领（默认）"
+          ],
+          [
+            "manual",
+            "手动指定主人"
+          ]
+        ],
+        "help": "首次认领仅接受该机器人首位私聊用户；群聊不会认领。认领后永久保存，重启或新会话不会更换。"
+      },
+      {
+        "key": "ownerUserId",
+        "group": "主人与记忆",
+        "label": "主人平台用户 ID",
+        "type": "text",
+        "when": {
+          "ownerMode": "manual"
+        },
+        "help": "手动填写 Discord 用户 ID；保存后立即覆盖该渠道主人。"
+      },
+      {
+        "key": "ownerStatus",
+        "group": "主人与记忆",
+        "label": "当前主人",
+        "type": "readonly",
+        "detail": "ownerStatus",
+        "help": "当前主人已持久记录，不因重启或新建会话改变。"
+      },
+      {
+        "key": "identityLinks",
+        "group": "会话与输入",
+        "label": "跨渠道身份绑定",
+        "type": "list",
+        "help": "可选，每行填写 用户ID=共同身份标识；只接受允许列表中的用户，双方填写相同标识才共享私聊。",
+        "advanced": true
+      },
+      {
+        "key": "throttleMs",
+        "group": "回复与附件",
+        "label": "进度更新间隔（毫秒）",
+        "type": "number",
+        "min": 400,
+        "max": 5000,
+        "when": [
+          {
+            "streaming.mode": "progress"
+          },
+          {
+            "streaming.mode": "partial"
+          }
+        ],
+        "advanced": true
+      },
+      {
+        "key": "attachments",
+        "group": "回复与附件",
+        "label": "接收附件",
+        "type": "boolean",
+        "advanced": true
+      },
+      {
+        "key": "maxAttachmentMB",
+        "group": "回复与附件",
+        "label": "单附件大小限制（MiB）",
+        "type": "number",
+        "min": 1,
+        "max": 20,
+        "advanced": true
+      },
+      {
+        "key": "streaming.progress.toolProgress",
+        "label": "显示工具进度",
+        "type": "boolean",
+        "group": "进度显示",
+        "advanced": true,
+        "when": {
+          "streaming.mode": "progress"
+        }
+      },
+      {
+        "key": "streaming.progress.commentary",
+        "label": "显示简短执行说明",
+        "type": "boolean",
+        "group": "进度显示",
+        "advanced": true,
+        "when": {
+          "streaming.mode": "progress"
+        },
+        "help": "显示模型公开的执行说明，完成后由完整回答替换。"
+      },
+      {
+        "key": "streaming.progress.toolDetail",
+        "label": "显示命令与目标摘要",
+        "type": "boolean",
+        "group": "进度显示",
+        "advanced": true,
+        "when": {
+          "streaming.mode": "progress"
+        },
+        "help": "在工具名后附上简短目标，例如“执行命令 · npm pack”；敏感内容自动打码。"
+      },
+      {
+        "key": "streaming.progress.narration",
+        "label": "显示思考过程（碎碎念）",
+        "type": "boolean",
+        "group": "进度显示",
+        "advanced": true,
+        "when": {
+          "streaming.mode": "progress"
+        },
+        "help": "显示模型推理片段的最新一行（截断）。默认关闭。"
+      },
+      {
+        "key": "streaming.progress.maxLines",
+        "label": "最多显示进度行数",
+        "type": "number",
+        "group": "进度显示",
+        "advanced": true,
+        "when": {
+          "streaming.mode": "progress"
+        },
+        "min": 1,
+        "max": 12
+      },
+      {
+        "key": "streaming.progress.maxLineChars",
+        "label": "每行最多字符数",
+        "type": "number",
+        "group": "进度显示",
+        "advanced": true,
+        "when": {
+          "streaming.mode": "progress"
+        },
+        "min": 40,
+        "max": 300
+      }
+    ],
+    "credentialTitle": "机器人凭证",
+    "credentialsFirst": true
+  },
+  "dsh-channel-feishu": {
+    "rowId": "channel-feishu",
+    "endpoint": "feishuChannelSettings",
+    "title": "飞书渠道",
+    "description": "将飞书消息接入 DSH 原生会话，支持回复、附件和渠道设置。",
+    "standalone": true,
+    "actionLabel": "重新连接",
+    "credentialFields": {
+      "appSecretRef": "飞书应用密钥"
+    },
+    "fields": [
+      {
+        "key": "enabled",
+        "label": "连接渠道",
+        "type": "boolean",
+        "help": "保存后自动连接；有效凭证用于登录，消息接收范围单独配置。",
+        "group": "账号与连接"
+      },
+      {
+        "key": "accountId",
+        "label": "账号标识",
+        "type": "text",
+        "help": "本地用于区分机器人账号，配置后保持稳定。",
+        "group": "账号与连接"
+      },
+      {
+        "key": "appId",
+        "label": "飞书应用 App ID",
+        "type": "text",
+        "group": "账号与连接"
+      },
+      {
+        "key": "domain",
+        "label": "应用区域",
+        "type": "select",
+        "options": [
+          [
+            "feishu",
+            "飞书"
+          ],
+          [
+            "lark",
+            "Lark"
+          ]
+        ],
+        "group": "账号与连接"
+      },
+      {
+        "key": "appSecretRef",
+        "label": "凭证名称",
+        "type": "text",
+        "help": "密钥在下方凭证区单独保存，config.json 只保存引用名称。",
+        "group": "账号与连接"
+      },
+      {
+        "key": "allowedUsers",
+        "group": "接收范围",
+        "label": "允许使用的用户 ID",
+        "type": "list",
+        "help": "每行一个；留空时仍可连接，但不接收会话消息。"
+      },
+      {
+        "key": "allowGroups",
+        "group": "接收范围",
+        "label": "接收群聊消息",
+        "type": "boolean"
+      },
+      {
+        "key": "allowedGroups",
+        "group": "接收范围",
+        "label": "允许的群 chat_id",
+        "type": "list",
+        "help": "每行一个；只有列表中的会话可以进入 DSH。"
+      },
+      {
+        "key": "requireMention",
+        "group": "接收范围",
+        "label": "群聊需要 @ 机器人",
+        "type": "boolean"
+      },
+      {
+        "key": "inputMode",
+        "group": "会话与输入",
+        "label": "新消息输入方式",
+        "type": "select",
+        "options": [
+          [
+            "inherit",
+            "跟随“渠道与会话”设置"
+          ],
+          [
+            "steering",
+            "Steering：加入当前任务"
+          ],
+          [
+            "queue",
+            "Queue：排入后续轮次"
+          ],
+          [
+            "interrupt",
+            "Interrupt：停止当前轮次并接收新输入"
+          ]
+        ]
+      },
+      {
+        "key": "agentPreset",
+        "group": "会话与输入",
+        "label": "Agent 预设 ID",
+        "type": "text"
+      },
+      {
+        "key": "workspacePath",
+        "group": "会话与输入",
+        "label": "工作区路径",
+        "type": "text",
+        "help": "留空使用官方默认工作区；填写后按工作区隔离会话。"
+      },
+      {
+        "key": "memoryNamespace",
+        "group": "会话与输入",
+        "label": "记忆命名空间",
+        "type": "text"
+      },
+      {
+        "key": "ownerMode",
+        "group": "主人与记忆",
+        "label": "主人认领方式",
+        "type": "select",
+        "options": [
+          [
+            "first-dm",
+            "首次私聊自动认领（默认）"
+          ],
+          [
+            "manual",
+            "手动指定主人"
+          ]
+        ],
+        "help": "首次认领仅接受该机器人首位私聊用户；群聊不会认领。认领后永久保存，重启或新会话不会更换。"
+      },
+      {
+        "key": "ownerUserId",
+        "group": "主人与记忆",
+        "label": "主人平台用户 ID",
+        "type": "text",
+        "when": {
+          "ownerMode": "manual"
+        },
+        "help": "手动模式填写 Discord 用户 ID 或飞书 open_id，保存后立即覆盖该渠道主人。两个渠道分别认领，统一访问 DSH 主人记忆。"
+      },
+      {
+        "key": "ownerStatus",
+        "group": "主人与记忆",
+        "label": "当前主人",
+        "type": "readonly",
+        "detail": "ownerStatus",
+        "help": "第一位私聊者认领后自动更新；设置页可刷新查看。此信息保存在 Channel Core 数据库，而不是旧渠道配置文件。"
+      },
+      {
+        "key": "identityLinks",
+        "group": "会话与输入",
+        "label": "跨渠道身份绑定",
+        "type": "list",
+        "help": "可选的高级功能：每行 用户ID=共同身份标识，用于跨渠道共用同一个 Session。仅共享长期记忆时无需设置此项。"
+      },
+      {
+        "key": "streaming.mode",
+        "group": "回复与附件",
+        "label": "回复显示方式",
+        "type": "select",
+        "options": [
+          [
+            "progress",
+            "执行进度（progress）"
+          ],
+          [
+            "partial",
+            "实时正文（partial）"
+          ],
+          [
+            "off",
+            "仅最终回复（off）"
+          ]
+        ],
+        "help": "执行进度更新同一条卡片，完成后显示完整回答。"
+      },
+      {
+        "key": "streaming.progress.toolProgress",
+        "group": "进度显示",
+        "label": "显示工具进度",
+        "type": "boolean",
+        "advanced": true,
+        "when": {
+          "streaming.mode": "progress"
+        }
+      },
+      {
+        "key": "streaming.progress.commentary",
+        "group": "进度显示",
+        "label": "显示简短执行说明",
+        "type": "boolean",
+        "advanced": true,
+        "when": {
+          "streaming.mode": "progress"
+        },
+        "help": "显示模型公开的执行说明，完成后由完整回答替换。"
+      },
+      {
+        "key": "streaming.progress.toolDetail",
+        "group": "进度显示",
+        "label": "显示命令与目标摘要",
+        "type": "boolean",
+        "advanced": true,
+        "when": {
+          "streaming.mode": "progress"
+        },
+        "help": "在工具名后附上简短目标，例如“执行命令 · npm pack”；摘要经过脱敏，但不要在命令中放置凭证。"
+      },
+      {
+        "key": "streaming.progress.narration",
+        "group": "进度显示",
+        "label": "显示思考片段（谨慎）",
+        "type": "boolean",
+        "advanced": true,
+        "when": {
+          "streaming.mode": "progress"
+        },
+        "help": "默认关闭。仅显示原始推理最新一行（截断），不保证脱敏；群聊请保持关闭。"
+      },
+      {
+        "key": "streaming.progress.maxLines",
+        "group": "进度显示",
+        "label": "最多显示进度行数",
+        "type": "number",
+        "min": 1,
+        "max": 12,
+        "advanced": true,
+        "when": {
+          "streaming.mode": "progress"
+        }
+      },
+      {
+        "key": "streaming.progress.maxLineChars",
+        "group": "进度显示",
+        "label": "每行最多字符数",
+        "type": "number",
+        "min": 40,
+        "max": 300,
+        "advanced": true,
+        "when": {
+          "streaming.mode": "progress"
+        }
+      },
+      {
+        "key": "throttleMs",
+        "group": "回复与附件",
+        "label": "进度更新间隔（毫秒）",
+        "type": "number",
+        "min": 400,
+        "max": 5000
+      },
+      {
+        "key": "attachments",
+        "group": "回复与附件",
+        "label": "接收附件",
+        "type": "boolean"
+      },
+      {
+        "key": "maxAttachmentMB",
+        "group": "回复与附件",
+        "label": "单附件大小限制（MiB）",
+        "type": "number",
+        "min": 1,
+        "max": 20
+      }
+    ]
+  }
+}

@@ -1,0 +1,3 @@
+- insert:
+    - id: channel-core
+      name: dsh-channel-core
