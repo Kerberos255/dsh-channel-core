@@ -32,7 +32,7 @@ Stop 使用 DSH 原生 `sessionController.cancel()`。Web 按钮、快捷键与 
 **安装一个 `dsh-channel-core` 即可同时获得 Discord、飞书两个内部 Adapter。** 两者共享 ChannelBridge、会话路由与消息交付，仍有独立配置、凭证和连接生命周期；一个渠道不可用不应阻塞另一个渠道。
 
 - 设置入口：「设置 → 插件 → 渠道与会话」，页内三个标签 **通用与会话 / Discord / 飞书**，复用原有 RPC endpoint `discordChannelSettings`、`feishuChannelSettings`。
-- 配置目录：`<DSH_ROOT>/plugins\dsh-channel-core\channels\discord\config.json` 和 `...\feishu\config.json`。首次启动仅在新文件不存在时从旧 `dsh-channel-discord` / `dsh-channel-feishu` 目录 **复制**配置，不删除、覆盖旧文件；原凭证仍由 DSH 凭证管理存储。
+- 配置目录：`E:\dsh\plugins\dsh-channel-core\channels\discord\config.json` 和 `...\feishu\config.json`。首次启动仅在新文件不存在时从旧 `dsh-channel-discord` / `dsh-channel-feishu` 目录 **复制**配置，不删除、覆盖旧文件；原凭证仍由 DSH 凭证管理存储。
 - Core 代码：`channels/discord`、`channels/feishu` + `lib/channel-components.js`。源码设置页由 `tooling/dsh-channel-bundle/build-client.mjs` 生成；不要直接修改生成的 `lib/client.js`。
 - 安装顺序：先备份旧 profile、旧渠道配置；打包安装 Core 0.4.0，移除旧 Discord/Feishu **安装条目**；旧配置仍留本机作为回退，原有 SQLite/session/身份数据不迁移、不删除；重启客户端确认 Core、Discord 和飞书服务正常注册。
 - 本地回归：Core 60 项 + Discord 24 项 + 飞书 7 项（含 ConfigFile 读写兼容），安装验证另测实际三标签 UI、渠道连接与健康状态；没有飞书凭证时不宣称已完成真实飞书连接验收。
@@ -43,3 +43,7 @@ Stop 使用 DSH 原生 `sessionController.cancel()`。Web 按钮、快捷键与 
 Discord / 飞书的「主人与记忆」默认使用 **首次私聊认领**，认领操作在消息经过渠道允许规则后、进入 Session 之前完成。SQLite `channel_owners` 按渠道+机器人账号保存主人 userId；后续普通私聊、重连和重启都不能覆盖，群聊不能认领。设置页可以查看「当前主人」，或切换为「手动指定主人」，填写平台 userId 来替换；替换后旧主人立即失去工作区共享记忆访问资格。
 
 两个渠道分别识别平台账号，但统一向 Memory 提供逻辑主人标识 `owner`，因此**不需要额外设置 identityLinks** 即可共享已发布个人记忆；如需真正复用同一个原生 Session 才需要另行设置跨平台身份映射。认领者仍需满足其它已配置的渠道接收规则。
+
+## 自动轮转的渠道安全边界（0.4.6）
+
+仅供 LCM 内部调用的 `rotateTrustedDM` 会再次核验 Dream 已完成的运行记录与交接文件哈希、旧/新原生会话的工作区与预设、主人身份、待处理渠道消息以及事件游标。通过后在一个 SQLite 事务内一起切换飞书/Discord 共享私聊绑定，并保存归档会话的已核验来源归属。旧历史不删除；历史身份读取时仍按当前账号归属重新验证。非私聊、未知主人、混合身份、跨工作区、缺少已核实记忆产物等情况一律拒绝自动切换。
