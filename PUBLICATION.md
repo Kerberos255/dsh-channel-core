@@ -29,3 +29,7 @@ Discord Ask User 提问前，会把本轮已经提交的公开文本展示成独
 ## 0.4.12 · Discord Ask User 文本边界安全性
 
 Ask User 已发送的前文仅在原生 assistant/message 的明确换行边界后扣除；同一行继续生成或改写时不进行猜测性裁剪，以免丢失正文。新增回归断言覆盖这一差异。
+
+## 0.4.13 · Discord Ask User 交互按钮修复
+
+修复公开源码中 Discord 按钮交互回调错误保留的占位表达式，改为从 `interaction.customId` 的 `dsh:` 前缀之后提取真实动作标识。新增模拟按钮测试，验证按钮动作实际抵达原生处理器，而不仅仅是发送提问消息；原有重复正文与连续 Ask User 测试保持通过。

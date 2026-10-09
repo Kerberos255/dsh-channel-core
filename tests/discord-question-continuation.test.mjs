@@ -4,7 +4,7 @@ import { createTransport } from '../channels/discord/transport.js';
 import { afterPresentedContext } from '../channels/discord/question-context.js';
 
 function fixture(){
- const messages=new Map(),history=[],removed=[],handlers=new Map();
+ const messages=new Map(),history=[],removed=[],actions=[],handlers=new Map();
  let current=0;
  const channel={
   isTextBased:()=>true,
@@ -32,9 +32,9 @@ function fixture(){
  const config={accountId:'bot-1',streaming:{mode:'progress',progress:{maxLines:4}},throttleMs:1,registerCommands:false};
  const origin={provider:'discord',accountId:'bot-1',conversationId:'private-dm',userId:'owner',messageId:'user-first',kind:'dm'};
  const controller=new AbortController();
- return{messages,history,removed,config,origin,sdk,signal:controller.signal,async create(){return createTransport({
+ return{messages,history,removed,actions,handlers,config,origin,sdk,signal:controller.signal,async create(){return createTransport({
   config,credentials:['synthetic-bot-token'],signal:controller.signal,
-  receive:async()=>{},state:()=>{},action:async()=>{},sessions:async()=>[],host:{}
+  receive:async()=>{},state:()=>{},action:async value=>actions.push(value),sessions:async()=>[],host:{}
  },sdk);},close:()=>controller.abort(),
  visible:()=>[...messages.values()].filter(x=>!x.deleted).map(x=>x.content)};
 }
@@ -91,5 +91,21 @@ test('without prior Ask User a final remains unchanged; exact-context final does
   await t.send(later,{status,text:'已告知全部信息',final:true});
   assert.equal(f.visible().filter(x=>x==='已告知全部信息').length,1);
   assert(f.visible().includes('本轮已完成。'));
+ }finally{await t.close();f.close();}
+});
+
+test('Discord Ask User button extracts the action token from its customId',async()=>{
+ const f=fixture(),t=await f.create();try{
+  let acknowledged=false;
+  await f.handlers.get('interactionCreate')({
+   isAutocomplete:()=>false,isChatInputCommand:()=>false,isMessageComponent:()=>true,
+   customId:'dsh:synthetic-answer-123',user:{id:'owner'},channelId:'private-dm',
+   channel:{isThread:()=>false},message:{id:'bot-question'},values:['yes'],deferred:true,
+   async deferUpdate(){acknowledged=true;},async followUp(){throw new Error('Valid answer must not fall back to an error response');}
+  });
+  assert.equal(acknowledged,true);
+  assert.equal(f.actions.length,1);
+  assert.equal(f.actions[0].token,'synthetic-answer-123');
+  assert.equal(f.actions[0].userId,'owner');
  }finally{await t.close();f.close();}
 });

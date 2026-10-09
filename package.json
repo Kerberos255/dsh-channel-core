@@ -1,6 +1,6 @@
 {
   "name": "dsh-channel-core",
-  "version": "0.4.12",
+  "version": "0.4.13",
   "type": "module",
   "description": "统一管理 Discord、飞书渠道、会话绑定、消息交付与进度卡片的单插件。",
   "license": "MIT",

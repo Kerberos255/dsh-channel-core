@@ -97,7 +97,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
       }
       if(!interaction.isMessageComponent?.()||!interaction.customId.startsWith('dsh:'))return;
       await interaction.deferUpdate();
-      await action({token:[REDACTED],userId:interaction.user.id,conversationId:interaction.channel?.isThread?.()?interaction.channel.parentId:interaction.channelId,threadId:interaction.channel?.isThread?.()?interaction.channelId:undefined,messageId:interaction.message.id,values:interaction.values});
+      await action({token:interaction.customId.slice(4),userId:interaction.user.id,conversationId:interaction.channel?.isThread?.()?interaction.channel.parentId:interaction.channelId,threadId:interaction.channel?.isThread?.()?interaction.channelId:undefined,messageId:interaction.message.id,values:interaction.values});
     }catch{
       const body={content:'该操作已失效，或当前账号与频道无权执行。',flags:64,allowedMentions:{parse:[]}};
       if(interaction.deferred||interaction.replied)await interaction.followUp(body).catch(()=>{});else await interaction.reply(body).catch(()=>{});
