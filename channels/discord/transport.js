@@ -3,6 +3,11 @@ import { renderProgress,renderNotice } from './progress.js';
 import { convertMarkdownTables } from './tables.js';
 import { currentSelection, decodeModel, defaultEffort, describeSelection, effortChoices, modelChoices } from './model-commands.js';
 
+// Discord 的"正在输入"提示约 10 秒后自动消失，所以按心跳刷新；上限是保险丝，
+// 防止异常回合把提示一直挂着。心跳失败只影响这个提示，绝不影响回复本身。
+const TYPING_REFRESH_MS=8000;
+const TYPING_MAX_MS=10*60*1000;
+
 export function normalize(message,config,botId){
   const thread=message.channel.isThread?.();
   const conversationId=thread?message.channel.parentId:message.channelId;
@@ -103,6 +108,30 @@ export async function createTransport({config,credentials,signal,receive,state,a
   on('shardResume',()=>state('Discord 已重新连接',true));
   on('clientReady',()=>state('Discord 已连接',true));
   async function channelFor(origin){checkAbort(signal);const channel=await client.channels.fetch(origin.threadId??origin.conversationId);if(!channel?.isTextBased())throw Object.assign(new Error('channel-unavailable'),{definitelyNotSent:true});return channel;}
+  const typing=new Map();
+  function stopTyping(origin){
+    const id=key(origin),entry=typing.get(id);
+    if(!entry)return;
+    typing.delete(id);
+    if(entry.timer)clearInterval(entry.timer);
+  }
+  // 回合一开始（第一次进度）就点亮"正在输入"，随后按心跳续期；最终回复、
+  // 等待用户回答或超时都会停。渠道频道本身不缓存 typing 状态，所以每次都用
+  // channelFor 拿到的同一个频道对象发送即可。
+  function startTyping(origin){
+    const id=key(origin);
+    if(typing.has(id))return;
+    const entry={timer:null,channel:null,deadline:Date.now()+TYPING_MAX_MS};
+    typing.set(id,entry);
+    const ping=async()=>{
+      if(Date.now()>=entry.deadline||signal.aborted){stopTyping(origin);return;}
+      try{entry.channel??=await channelFor(origin);await entry.channel.sendTyping();}
+      catch{/* 输入状态只是提示：失败静默跳过，绝不打断回合 */}
+    };
+    void ping();
+    entry.timer=setInterval(()=>{void ping();},TYPING_REFRESH_MS);
+    entry.timer.unref?.();
+  }
   const options=(content,origin,body)=>({content,allowedMentions:{parse:[],repliedUser:false},...(origin.messageId&&!origin.messageId.startsWith('interaction:')?{reply:{messageReference:origin.messageId,failIfNotExists:false}}:{}),...(body.id?{nonce:body.id.slice(0,24),enforceNonce:true}:{})});
   async function present(origin,body,actions=[],content=renderNotice(body)){
     const id=key(origin),existing=progress.get(id);
@@ -121,6 +150,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
     progress.delete(key(origin));presented.delete(key(origin));interactions.delete(origin.messageId);
   }
   async function question(origin,body,actions){
+    stopTyping(origin);
     const id=key(origin),context=String(body.context??''),previous=questionContexts.get(id)??'';
     const added=context.startsWith(previous)?context.slice(previous.length).trimStart():context;
     if(added){
@@ -140,17 +170,23 @@ export async function createTransport({config,credentials,signal,receive,state,a
     }
     const sent=await present(origin,body,actions,parts.at(-1));questions.set(id,text);return sent;
   }
-  let closing;const close=()=>closing??=(async()=>{signal.removeEventListener('abort',onAbort);listeners.splice(0).forEach(dispose=>dispose());await client.destroy();progress.clear();presented.clear();interactions.clear();questionContexts.clear();questions.clear();})();
+  let closing;const close=()=>closing??=(async()=>{signal.removeEventListener('abort',onAbort);listeners.splice(0).forEach(dispose=>dispose());await client.destroy();typing.forEach(entry=>{if(entry.timer)clearInterval(entry.timer);});typing.clear();progress.clear();presented.clear();interactions.clear();questionContexts.clear();questions.clear();})();
   const onAbort=()=>{void close().catch(()=>{});};signal.addEventListener('abort',onAbort,{once:true});
   return {
     throttleMs:config.throttleMs,
     details:()=>({applicationId:client.application?.id??'',botId:client.user?.id??''}),
     async start(){await client.login(credentials[0]);checkAbort(signal);if(config.registerCommands)for(const command of slashCommands)await client.application.commands.create(command);},
     close,
-    progress:config.streaming.mode!=='off'?(origin,body)=>present(origin,body,[],renderProgress(body,config.streaming)):undefined,
+    progress:config.streaming.mode!=='off'?(origin,body)=>{if(body?.final===true)stopTyping(origin);else startTyping(origin);return present(origin,body,[],renderProgress(body,config.streaming));}:undefined,
     question,
     async send(origin,body){
+      stopTyping(origin);
       const channel=await channelFor(origin),parts=splitDiscord(convertMarkdownTables(body.text)),existing=progress.get(key(origin));
+      // Native Steer uses one Turn and one progress draft, but the final must be
+      // sent AFTER the newest user input instead of editing that older draft.
+      const oldKey=body.progressOriginMessageId?key({...origin,messageId:body.progressOriginMessageId}):null;
+      const oldProgress=oldKey&&oldKey!==key(origin)?progress.get(oldKey):null;
+      if(oldProgress)stopTyping({...origin,messageId:body.progressOriginMessageId});
       let first;
       for(let i=0;i<parts.length;i++){
         checkAbort(signal);
@@ -158,6 +194,12 @@ export async function createTransport({config,credentials,signal,receive,state,a
         const interaction=i===0&&!existing?interactions.get(origin.messageId):undefined;
         const message=i===0&&existing?await channel.messages.edit(existing,{content,components:[],allowedMentions:{parse:[]}}):interaction?await interaction.editReply({content,components:[],allowedMentions:{parse:[]}}):await channel.send(options(content,origin,{id:body.id?body.id.slice(0,20)+'-'+i:undefined}));
         first??=message.id;
+      }
+      // Retire the old status only after the new final is confirmed. Cleanup
+      // failures must not mark a successfully delivered final as uncertain.
+      if(oldProgress){
+        try{await channel.messages.delete(oldProgress);progress.delete(oldKey);presented.delete(oldKey);}
+        catch(error){state('Discord 已发出最终回复，但旧进度消息清理失败：'+(error.code??'unknown'));}
       }
       progress.delete(key(origin));presented.delete(key(origin));interactions.delete(origin.messageId);questionContexts.delete(key(origin));questions.delete(key(origin));return {messageId:first};
     },
