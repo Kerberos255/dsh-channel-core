@@ -32,7 +32,7 @@ Stop 使用 DSH 原生 `sessionController.cancel()`。Web 按钮、快捷键与 
 **安装一个 `dsh-channel-core` 即可同时获得 Discord、飞书两个内部 Adapter。** 两者共享 ChannelBridge、会话路由与消息交付，仍有独立配置、凭证和连接生命周期；一个渠道不可用不应阻塞另一个渠道。
 
 - 设置入口：「设置 → 插件 → 渠道与会话」，页内三个标签 **通用与会话 / Discord / 飞书**，复用原有 RPC endpoint `discordChannelSettings`、`feishuChannelSettings`。
-- 配置目录：`E:\dsh\plugins\dsh-channel-core\channels\discord\config.json` 和 `...\feishu\config.json`。首次启动仅在新文件不存在时从旧 `dsh-channel-discord` / `dsh-channel-feishu` 目录 **复制**配置，不删除、覆盖旧文件；原凭证仍由 DSH 凭证管理存储。
+- 配置目录：`DSH_HOME/plugins/dsh-channel-core/channels/discord/config.json` 和 `...\feishu\config.json`。首次启动仅在新文件不存在时从旧 `dsh-channel-discord` / `dsh-channel-feishu` 目录 **复制**配置，不删除、覆盖旧文件；原凭证仍由 DSH 凭证管理存储。
 - Core 代码：`channels/discord`、`channels/feishu` + `lib/channel-components.js`。源码设置页由 `tooling/dsh-channel-bundle/build-client.mjs` 生成；不要直接修改生成的 `lib/client.js`。
 - 安装顺序：先备份旧 profile、旧渠道配置；打包安装 Core 0.4.0，移除旧 Discord/Feishu **安装条目**；旧配置仍留本机作为回退，原有 SQLite/session/身份数据不迁移、不删除；重启客户端确认 Core、Discord 和飞书服务正常注册。
 - 本地回归：Core 60 项 + Discord 24 项 + 飞书 7 项（含 ConfigFile 读写兼容），安装验证另测实际三标签 UI、渠道连接与健康状态；没有飞书凭证时不宣称已完成真实飞书连接验收。
