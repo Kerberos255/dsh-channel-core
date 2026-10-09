@@ -27,6 +27,9 @@
     "locale/",
     "cordis.patch.yml",
     "README.md",
+    "README.zh-CN.md",
+    "SECURITY.md",
+    "CHANGELOG.md",
     "config.example.json"
   ],
   "dsh": {
