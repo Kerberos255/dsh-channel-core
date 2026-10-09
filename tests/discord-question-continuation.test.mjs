@@ -44,6 +44,7 @@ test('exact previously published Ask User text is stripped, but mismatches are n
  assert.equal(afterPresentedContext('第一段\n\n第二段','第一段'),'第二段');
  assert.equal(afterPresentedContext('第一段','第一段'),'');
  assert.equal(afterPresentedContext('第一段又不同','第一段'),'第一段又不同');
+ assert.equal(afterPresentedContext('第一段 was corrected\\n\\n第二段','第一段'),'第一段 was corrected\\n\\n第二段','same-line rewrites must not be truncated');
  assert.equal(afterPresentedContext('新文','旧文'),'新文');
  assert.equal(afterPresentedContext('全文',''),'全文');
 });

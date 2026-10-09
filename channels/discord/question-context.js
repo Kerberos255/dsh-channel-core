@@ -6,6 +6,8 @@ export function afterPresentedContext(value,context){
  const text=String(value??''),prefix=String(context??'');
  if(!prefix||!text.startsWith(prefix))return text;
  const rest=text.slice(prefix.length);
- if(rest&&!/^\s/.test(rest))return text;
+ // Native assistant/message commits are joined by paragraph breaks. Do not
+ // treat same-line additions or rewrites as a provably delivered prefix.
+ if(rest&&!/^\r?\n/.test(rest))return text;
  return rest.trimStart();
 }

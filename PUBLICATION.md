@@ -25,3 +25,7 @@ Local-first performance optimization synchronized on 2026-10-08 from DSH plugin 
 ## 0.4.11 · Discord Ask User 续写去重
 
 Discord Ask User 提问前，会把本轮已经提交的公开文本展示成独立历史消息。回答后原生 Turn 的最终提交仍包含这段前缀。新版本仅在与已展示前缀完整匹配时过滤这段重复正文；连续提问、多次选项更新和随后 Steer 时继续保留原历史与来源核验。正文不匹配时不删减，以避免丢失内容。公开版新增使用模拟 Discord SDK 的独立回归，真实 Discord 连接须由 Host 实机验证。
+
+## 0.4.12 · Discord Ask User 文本边界安全性
+
+Ask User 已发送的前文仅在原生 assistant/message 的明确换行边界后扣除；同一行继续生成或改写时不进行猜测性裁剪，以免丢失正文。新增回归断言覆盖这一差异。
