@@ -21,3 +21,7 @@ Local-first performance optimization synchronized on 2026-10-08 from DSH plugin 
 - 与本地 Core 对齐 Discord steering / 进度消息的事件交付、桥接与工具状态格式；保持同一轮 steer 与现有渠道身份核验。
 - 公开仓库仅同步 `channels/discord/transport.js` 与 `lib/` 的经过差异核对的生产源码；未复制本地运行配置、凭据、Session 或工作区。
 - CI 的宿主无关测试可验证公开进度格式和身份规则；真实 Discord/Feishu 连接及 DSH Desktop 的端到端认证仍需宿主验收。
+
+## 0.4.11 · Discord Ask User 续写去重
+
+Discord Ask User 提问前，会把本轮已经提交的公开文本展示成独立历史消息。回答后原生 Turn 的最终提交仍包含这段前缀。新版本仅在与已展示前缀完整匹配时过滤这段重复正文；连续提问、多次选项更新和随后 Steer 时继续保留原历史与来源核验。正文不匹配时不删减，以避免丢失内容。公开版新增使用模拟 Discord SDK 的独立回归，真实 Discord 连接须由 Host 实机验证。

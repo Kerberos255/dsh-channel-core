@@ -1,5 +1,6 @@
 import { checkAbort, discordAttachment, splitDiscord, statusLabel } from 'dsh-channel-core/transport-utils';
 import { renderProgress,renderNotice } from './progress.js';
+import { afterPresentedContext } from './question-context.js';
 import { convertMarkdownTables } from './tables.js';
 import { currentSelection, decodeModel, defaultEffort, describeSelection, effortChoices, modelChoices } from './model-commands.js';
 
@@ -96,7 +97,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
       }
       if(!interaction.isMessageComponent?.()||!interaction.customId.startsWith('dsh:'))return;
       await interaction.deferUpdate();
-      await action({token:interaction.customId.slice(4),userId:interaction.user.id,conversationId:interaction.channel?.isThread?.()?interaction.channel.parentId:interaction.channelId,threadId:interaction.channel?.isThread?.()?interaction.channelId:undefined,messageId:interaction.message.id,values:interaction.values});
+      await action({token:[REDACTED],userId:interaction.user.id,conversationId:interaction.channel?.isThread?.()?interaction.channel.parentId:interaction.channelId,threadId:interaction.channel?.isThread?.()?interaction.channelId:undefined,messageId:interaction.message.id,values:interaction.values});
     }catch{
       const body={content:'该操作已失效，或当前账号与频道无权执行。',flags:64,allowedMentions:{parse:[]}};
       if(interaction.deferred||interaction.replied)await interaction.followUp(body).catch(()=>{});else await interaction.reply(body).catch(()=>{});
@@ -181,7 +182,14 @@ export async function createTransport({config,credentials,signal,receive,state,a
     question,
     async send(origin,body){
       stopTyping(origin);
-      const channel=await channelFor(origin),parts=splitDiscord(convertMarkdownTables(body.text)),existing=progress.get(key(origin));
+      const channel=await channelFor(origin),existing=progress.get(key(origin));
+      // Ask User already published the committed prefix as standalone history.
+      // turn/end still includes that prefix; only emit the continuation.
+      const oldContextKey=body.progressOriginMessageId?key({...origin,messageId:body.progressOriginMessageId}):null;
+      const context=questionContexts.get(key(origin))??(oldContextKey?questionContexts.get(oldContextKey):null);
+      const remainder=afterPresentedContext(body.text,context);
+      const finalText=remainder||(context&&String(body.text??'')===context?(body.status==='completed'?'本轮已完成。':body.status==='cancelled'?'本轮已停止。':'本轮已结束。'):body.text);
+      const parts=splitDiscord(convertMarkdownTables(finalText));
       // Native Steer uses one Turn and one progress draft, but the final must be
       // sent AFTER the newest user input instead of editing that older draft.
       const oldKey=body.progressOriginMessageId?key({...origin,messageId:body.progressOriginMessageId}):null;
@@ -201,7 +209,9 @@ export async function createTransport({config,credentials,signal,receive,state,a
         try{await channel.messages.delete(oldProgress);progress.delete(oldKey);presented.delete(oldKey);}
         catch(error){state('Discord 已发出最终回复，但旧进度消息清理失败：'+(error.code??'unknown'));}
       }
-      progress.delete(key(origin));presented.delete(key(origin));interactions.delete(origin.messageId);questionContexts.delete(key(origin));questions.delete(key(origin));return {messageId:first};
+      progress.delete(key(origin));presented.delete(key(origin));interactions.delete(origin.messageId);questionContexts.delete(key(origin));questions.delete(key(origin));
+      if(oldContextKey&&oldContextKey!==key(origin)){questionContexts.delete(oldContextKey);questions.delete(oldContextKey);}
+      return {messageId:first};
     },
     async upload(message,sessionId,fileUploads,uploadSignal){
       if(!config.attachments)throw Object.assign(new Error('attachments-disabled'),{code:'attachments-disabled'});
