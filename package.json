@@ -1,6 +1,6 @@
 {
   "name": "dsh-channel-core",
-  "version": "0.4.13",
+  "version": "0.4.34",
   "type": "module",
   "description": "统一管理 Discord、飞书渠道、会话绑定、消息交付与进度卡片的单插件。",
   "license": "MIT",
@@ -58,7 +58,7 @@
     "@deepseek-ai/dsh-client-file-upload": "0.2.0-rc.2 || 0.2.1-alpha.1"
   },
   "scripts": {
-    "test": "node --test tests/progress-lines.test.mjs tests/memory-access.test.mjs tests/discord-question-continuation.test.mjs"
+    "test": "node --test tests/progress-lines.test.mjs tests/memory-access.test.mjs tests/discord-question-continuation.test.mjs channels/discord/tests/final-format.test.mjs channels/discord/tests/tables.test.mjs"
   },
   "engines": {
     "node": ">=24"

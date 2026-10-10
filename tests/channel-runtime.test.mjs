@@ -5,14 +5,14 @@ import path from 'node:path';
 import { ChannelRuntime, allowed } from '../lib/channel-runtime.js';
 import { CoreStore } from '../lib/store.js';
 import { IdentityRouter } from '../lib/routing.js';
-import { schema } from '../../dsh-channel-discord/config.js';
-import { ConfigFile } from '../../dsh-channel-discord/plugin-settings/file-config.js';
+import { schema } from '../channels/discord/config.js';
+import { ConfigFile } from '../lib/channel-plugin-settings/file-config.js';
 
 function fixture(extra={},configFile) {
   const config=configFile?.value??{enabled:true,allowedUsers:[],allowedGroups:[],allowGroups:true,requireMention:false,accountId:'test',identityLinks:[],agentPreset:'agent',workspacePath:'',memoryNamespace:'private',inputMode:'inherit',...extra};
   const callbacks=new Set(),calls=[],events=new Map();
   const settings={configFile:configFile??{value:config,subscribe(fn){callbacks.add(fn);return()=>callbacks.delete(fn);}}};
-  const ctx={credentials:{async resolve(){return{value:'fixture'};}},channelCore:{resolveWorkspace:async config=>config.workspacePath||'E:\\dsh\\deepseek-harness\\default-workspace',networkReady:Promise.resolve(),runtimeNetwork:{source:'system'},store:{syncAliases(){}},bridge:{register(){return()=>{};}},receive:async(message)=>{calls.push(message);return{accepted:true};}},on(name,fn){events.set(name,fn);return()=>events.delete(name);}};
+  const ctx={credentials:{async resolve(){return{value:'fixture'};}},channelCore:{resolveWorkspace:async config=>config.workspacePath||'E:\\dsh\\deepseek-harness\\default-workspace',networkReady:Promise.resolve(),runtimeNetwork:{source:'system'},store:{syncAliases(){},claimOwner(){return null;},setOwner(){return null;}},bridge:{register(){return()=>{};}},receive:async(message)=>{calls.push(message);return{accepted:true};}},on(name,fn){events.set(name,fn);return()=>events.delete(name);}};
   let transportArgs,starts=0;
   const runtime=new ChannelRuntime(ctx,settings,{provider:'discord',credentialRefs:()=>['DISCORD_BOT_TOKEN'],createTransport:async args=>{transportArgs=args;return{start:async()=>{starts++;},close:async()=>{},details:()=>({applicationId:'application-fixture'})};}});
   return{runtime,ctx,calls,settings,get starts(){return starts;},get transportArgs(){return transportArgs;}};
@@ -55,7 +55,7 @@ test('all-private users reach the coordinator with separate identity sessions',a
 
 test('saving private scope and editing JSON apply to the next input and retire stale connections',async()=>{
  const directory=fs.mkdtempSync(path.resolve('private-scope-test-')),filename=path.join(directory,'config.json');
- const configFile=new ConfigFile(filename,schema);configFile.save({...schema.defaults,enabled:true},configFile.revision);
+ const configFile=new ConfigFile(filename,schema);configFile.save({...schema.defaults,enabled:true,ownerMode:'manual',ownerUserId:'allowed-owner'},configFile.revision);
  const f=fixture({},configFile),dm={...group,kind:'dm'};
  try{
   await f.runtime.reconfigure();assert.deepEqual(await f.transportArgs.receive(dm),{ignored:true});

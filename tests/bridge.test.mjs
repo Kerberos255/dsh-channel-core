@@ -9,7 +9,8 @@ function fixture(){
   const store=new CoreStore(':memory:'),events=new Map();
   const ctx={on(name,fn){events.set(name,fn);return ()=>events.delete(name);}};
   const bridge=new ChannelBridge(ctx,{store}),session={id:'test-session'},agent={session};
-  const origin={provider:'feishu',accountId:'test',conversationId:'chat-a',userId:'user-a',messageId:'input-a'};
+  const origin={provider:'feishu',accountId:'test',conversationId:'chat-a',userId:'user-a',kind:'dm',messageId:'input-a'};
+  store.setOwner('feishu','test','user-a');
   store.claim({key:'input-a',requestId:'input-a',sessionId:session.id,origin,payload:'a'});
   bridge.claimed(session,'input-a',1);
   const sent=[],questions=[],progress=[];
@@ -61,7 +62,7 @@ test('progress commentary stays public while reasoning is kept as a separate nar
 test('tool detail summarizes the target and masks credential-looking arguments',async()=>{
  const f=fixture();try{
   const execute=f.events.get('tools/execute');
-  await execute({agent:f.agent,callId:'read-9',name:'read_file',arguments:{path:'example-workspace/DESIGN.md'}},async()=>({isError:false,content:[]}));
+  await execute({agent:f.agent,callId:'read-9',name:'read_file',arguments:{path:'E:\\dsh\\deepseek-harness\\default-workspace\\DESIGN.md'}},async()=>({isError:false,content:[]}));
   await execute({agent:f.agent,callId:'exec-9',name:'pwsh',arguments:{command:'npm pack --token=SUPERSECRETVALUE'}},async()=>({isError:false,content:[]}));
   await flushProgress(f);const tools=f.progress.at(-1).body.activity.tools;
   assert.equal(tools.at(-2).detail,'DESIGN.md');
@@ -156,18 +157,360 @@ test('removed identity links stop future cross-channel sharing',()=>{
   store.syncAliases('feishu','test',[]);assert.notEqual(store.identity(alias),'shared');store.close();
 });
 test('channel gates and namespaces isolate groups, actors, presets and workspaces',()=>{
-  const config={allowedUsers:['a'],allowGroups:true,allowedGroups:['g'],requireMention:true,workspacePath:'/example/default-workspace',agentPreset:'agent',memoryNamespace:'private'};
+  const config={allowedUsers:['a'],allowGroups:true,allowedGroups:['g'],requireMention:true,workspacePath:'E:/dsh/default-workspace',agentPreset:'agent',memoryNamespace:'private'};
   assert(allowed({userId:'a',kind:'dm'},config));assert(!allowed({userId:'a',kind:'group',conversationId:'g'},config));assert(!allowed({userId:'b',kind:'dm'},config));
   assert(allowed({userId:'a',kind:'thread',conversationId:'g',mentionedBot:true},config));
-  assert.notEqual(channelScope(config).workspaceId,channelScope({...config,workspacePath:'/example/another'}).workspaceId);
+  assert.notEqual(channelScope(config).workspaceId,channelScope({...config,workspacePath:'E:/dsh/another'}).workspaceId);
 });
 test('runtime saves reconnect once, clears old listeners and contains credential errors',async()=>{
   const callbacks=new Set(),events=new Map(),transports=[],registrations=[];
   const config={enabled:true,allowedUsers:['a'],accountId:'test',identityLinks:[],appId:'cli-fixture'};
   const settings={configFile:{value:config,subscribe(fn){callbacks.add(fn);return ()=>callbacks.delete(fn);}}};
-  const ctx={credentials:{async resolve(){return {value:'fixture'};}},channelCore:{resolveWorkspace:async()=> '/example/fixture-workspace',store:{syncAliases(){}},bridge:{register(){registrations.push(1);return ()=>{registrations.pop();};}}},on(name,fn){events.set(name,fn);return ()=>events.delete(name);}};
+  const ctx={credentials:{async resolve(){return {value:'fixture'};}},channelCore:{resolveWorkspace:async()=> 'E:/dsh/fixture-workspace',store:{syncAliases(){}},bridge:{register(){registrations.push(1);return ()=>{registrations.pop();};}}},on(name,fn){events.set(name,fn);return ()=>events.delete(name);}};
   const runtime=new ChannelRuntime(ctx,settings,{provider:'feishu',credentialRefs:()=>['FEISHU_APP_SECRET'],createTransport:async({signal})=>{const item={signal,started:0,closed:0,start(){item.started++;},close(){item.closed++;return Promise.resolve();}};transports.push(item);return item;}});
   await runtime.reconfigure();assert(runtime.details().connected);await runtime.reconfigure();assert.equal(registrations.length,1);assert(transports[0].signal.aborted);
   await runtime.close();assert.equal(registrations.length,0);assert.equal(callbacks.size,0);assert.equal(events.size,0);
   const broken=new ChannelRuntime({...ctx,credentials:{resolve(){throw new Error('private secret must never appear');}}},settings,{provider:'feishu',credentialRefs:()=>['FEISHU_APP_SECRET'],createTransport:()=>assert.fail()});await broken.reconfigure();assert(!broken.details().message.includes('private secret'));await broken.close();
+});
+
+test('Steer in the same native Turn updates one Discord progress and sends one final reply',async()=>{
+ const f=fixture(),discord={provider:'discord',accountId:'live',conversationId:'dm-1',messageId:'discord-input-a',userId:'owner'};
+ const progress=[],sent=[];
+ const off=f.bridge.register('discord','live',{throttleMs:1,
+  progress:async(from,body)=>progress.push({from,body}),
+  send:async(from,body)=>{sent.push({from,body});return {messageId:'reply-'+sent.length};}});
+ try{
+  // Native steering claims a second request inside the existing Turn.
+  f.store.claim({key:'discord-a',requestId:'discord-a',sessionId:f.session.id,origin:discord,payload:'first'});
+  f.bridge.claimed(f.session,'discord-a',1);
+  f.store.claim({key:'discord-b',requestId:'discord-b',sessionId:f.session.id,origin:{...discord,messageId:'discord-input-b'},payload:'steering'});
+  f.bridge.claimed(f.session,'discord-b',1);
+  assert.equal(f.bridge.store.origins(f.session.id,1).filter(o=>o.provider==='discord').length,2,'retain both native input receipts');
+  assert.deepEqual(f.bridge.outputOrigins(f.session.id,1).filter(o=>o.provider==='discord').map(o=>o.messageId),['discord-input-a']);
+  await flushProgress(f);
+  const count=progress.length;
+  const execute=f.events.get('tools/execute');
+  await execute({agent:f.agent,callId:'tool-steer',name:'desktop_click'},async()=>({isError:false}));
+  await flushProgress(f);
+  assert(progress.length>=count+1&&progress.length<=count+2,'throttled progress emits at most running and settled updates once for the Turn');
+  assert(progress.every(p=>p.from.messageId==='discord-input-a'));
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[{type:'text',text:'同一轮完成'}]}}});
+  f.bridge.event(f.session,{type:'turn/end',data:{turn:1,reason:{kind:'completed'}}});
+  await f.bridge.idle();
+  assert.equal(sent.length,1);
+  assert.equal(sent[0].from.messageId,'discord-input-b','final replies to the latest Steer input');
+  assert.equal(sent[0].body.progressOriginMessageId,'discord-input-a','retire the earlier progress draft');
+  assert.equal(sent[0].body.text,'同一轮完成');
+  assert.equal(f.bridge.store.origins(f.session.id,1).filter(o=>o.provider==='discord').length,2);
+ }finally{await off();await f.close();}
+});
+
+test('different Discord Turns and distinct channels keep separate visible responses',async()=>{
+ const f=fixture(),sent=[];
+ const off=f.bridge.register('discord','live',{throttleMs:1,progress:async()=>{},send:async(from,body)=>{sent.push({from,body});return{messageId:'out-'+sent.length};}});
+ try{
+  const a={provider:'discord',accountId:'live',conversationId:'dm-a',messageId:'first',userId:'owner'};
+  const b={...a,messageId:'second'};
+  const c={...a,conversationId:'dm-b',messageId:'third'};
+  for(const [key,origin,turn] of [['in-1',a,1],['in-2',b,1],['in-3',c,1],['in-4',b,2]]){
+   f.store.claim({key,requestId:key,sessionId:f.session.id,origin,payload:key});
+   f.bridge.claimed(f.session,key,turn);
+  }
+  assert.equal(f.bridge.outputOrigins(f.session.id,1).filter(o=>o.provider==='discord').length,2);
+  assert.equal(f.bridge.outputOrigins(f.session.id,2).filter(o=>o.provider==='discord').length,1);
+  for(const turn of [1,2])f.bridge.event(f.session,{type:'turn/end',data:{turn,reason:{kind:'completed'}}});
+  await f.bridge.idle();
+  assert.deepEqual(sent.map(x=>x.from.messageId).sort(),['second','second','third']);
+  assert.equal(sent.find(x=>x.body.turn===1&&x.from.conversationId==='dm-a').body.progressOriginMessageId,'first');
+  assert.equal(sent.filter(x=>x.body.turn===1).length,2,'one final for each distinct conversation in Turn 1');
+  assert.equal(sent.filter(x=>x.body.turn===2).length,1,'new Turn receives its own final');
+ }finally{await off();await f.close();}
+});
+
+test('reasoning and tools interleave in progress and final retains only draft segments for owner DM',async()=>{
+ const f=fixture();try{
+  f.bridge.adapters.get(JSON.stringify(['feishu','test'])).adapter.showNarration=true;
+  const pushReason=(attempt,text)=>{
+    f.bridge.stream(f.session,{type:'start',turn:1,attemptId:attempt,revision:1});
+    f.bridge.stream(f.session,{type:'chunk',attemptId:attempt,revision:1,index:0,chunk:{type:'block-start',index:0,blockType:'reasoning'}});
+    f.bridge.stream(f.session,{type:'chunk',attemptId:attempt,revision:1,index:1,chunk:{type:'reasoning-delta',index:0,text}});
+  };
+  pushReason('first','草稿一');
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[{type:'reasoning',text:'草稿一'},{type:'tool-call',name:'read_file'}]}}});
+  await f.events.get('tools/execute')({agent:f.agent,callId:'read',name:'read_file'},async()=>({isError:false}));
+  pushReason('second','草稿二');
+  await flushProgress(f);
+  const recent=f.progress.at(-1).body.activity;
+  assert.deepEqual(recent.timeline.map(row=>row.type),['draft','tool']);
+  assert.equal(recent.activeDraft,'草稿二');
+  assert.equal(recent.timeline[0].text,'草稿一');
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[{type:'reasoning',text:'草稿二'},{type:'text',text:'最终正文'}]}}});
+  f.bridge.event(f.session,{type:'turn/end',data:{turn:1,reason:{kind:'completed'}}});
+  await f.bridge.idle();
+  assert.deepEqual(f.sent.at(-1).body.drafts,['草稿一','草稿二']);
+  assert.equal(f.sent.at(-1).body.text,'最终正文');
+  assert(!JSON.stringify(f.sent.at(-1).body).includes('read_file'),'tool events are not kept in the final draft');
+ }finally{await f.close();}
+});
+
+test('group recipients and non-owner DMs never receive finished draft content',async()=>{
+ const f=fixture();try{
+  f.bridge.adapters.get(JSON.stringify(['feishu','test'])).adapter.showNarration=true;
+  f.bridge.state(f.session.id,1).narration='私有草稿';
+  f.bridge.state(f.session.id,1).narrationCursor=0;
+  f.store.setOwner('feishu','test','other-user');
+  f.bridge.event(f.session,{type:'turn/end',data:{turn:1,reason:{kind:'completed'}}});
+  await f.bridge.idle();
+  assert(!Object.hasOwn(f.sent.at(-1).body,'drafts'));
+ }finally{await f.close();}
+});
+
+test('owner DM sees tentative streamed draft and public interim drafts while non-owners never see tentative text',async()=>{
+ const f=fixture();try{
+  f.bridge.stream(f.session,{type:'start',turn:1,attemptId:'draft-1',revision:1});
+  f.bridge.stream(f.session,{type:'chunk',attemptId:'draft-1',revision:1,index:0,chunk:{type:'block-start',index:0,blockType:'text'}});
+  f.bridge.stream(f.session,{type:'chunk',attemptId:'draft-1',revision:1,index:1,chunk:{type:'text-delta',index:0,text:'实时草稿一'}});
+  await flushProgress(f);
+  assert.equal(f.progress.at(-1).body.activity.activeTextDraft,'实时草稿一');
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[{type:'text',text:'阶段性说明一'},{type:'tool-call',name:'read_file'}]}}});
+  await f.events.get('tools/execute')({agent:f.agent,callId:'tool-1',name:'read_file'},async()=>({isError:false}));
+  f.bridge.stream(f.session,{type:'start',turn:1,attemptId:'draft-2',revision:1});
+  f.bridge.stream(f.session,{type:'chunk',attemptId:'draft-2',revision:1,index:0,chunk:{type:'block-start',index:0,blockType:'text'}});
+  f.bridge.stream(f.session,{type:'chunk',attemptId:'draft-2',revision:1,index:1,chunk:{type:'text-delta',index:0,text:'实时草稿二'}});
+  await flushProgress(f);
+  const activity=f.progress.at(-1).body.activity;
+  assert(activity.timeline.some(item=>item.type==='public-draft'&&item.text==='阶段性说明一'));
+  assert(activity.timeline.some(item=>item.type==='tool'&&item.activity.name==='read_file'));
+  assert.equal(activity.activeTextDraft,'实时草稿二');
+  f.store.setOwner('feishu','test','someone-else');
+  f.bridge.progress(f.origin,f.bridge.state(f.session.id,1));
+  await flushProgress(f);
+  const other=f.progress.at(-1).body.activity;
+  assert.equal(other.activeTextDraft,'');
+  assert.equal(other.activeDraft,'');
+ }finally{await f.close()}
+});
+
+test('reasoning block-end without a reasoning delta still reaches the progress timeline',async()=>{
+ const f=fixture();try{
+  f.bridge.stream(f.session,{type:'start',turn:1,attemptId:'reasoning',revision:1});
+  f.bridge.stream(f.session,{type:'chunk',attemptId:'reasoning',revision:1,index:0,chunk:{type:'block-start',index:0,blockType:'reasoning'}});
+  f.bridge.stream(f.session,{type:'chunk',attemptId:'reasoning',revision:1,index:1,chunk:{type:'block-end',index:0,block:{type:'reasoning',text:'实际思考段'}}});
+  await flushProgress(f);
+  assert.equal(f.progress.at(-1).body.activity.activeDraft,'实际思考段');
+ }finally{await f.close()}
+});
+
+const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+async function awaitCondition(check,description){
+ for(let i=0;i<75;i++){if(check())return;await delay(4);}
+ assert.fail('timed out waiting for '+description);
+}
+function discordProgressFixture(f,adapter){
+ const origin={provider:'discord',accountId:'live',conversationId:'dm-discord',messageId:'user-msg',kind:'dm',userId:'owner'};
+ f.store.setOwner('discord','live','owner');
+ const off=f.bridge.register('discord','live',{throttleMs:1,coalesceProgress:true,...adapter});
+ f.bridge.store.origin('discord-input',f.session.id,1,origin);
+ const state=f.bridge.state(f.session.id,1);
+ return {origin,state,off,registration:f.bridge.adapters.get(JSON.stringify(['discord','live']))};
+}
+
+test('Discord coalesces updates to only the latest snapshot while the first edit is rate-limit delayed',async()=>{
+ const f=fixture(),started=[],sent=[];
+ let unblock;
+ const wait=new Promise(resolve=>unblock=resolve);
+ const g=discordProgressFixture(f,{
+   progress:async(_origin,body)=>{started.push(body.text);if(started.length===1)await wait;},
+   send:async(_origin,body)=>{sent.push(body);return {messageId:'final'}}
+ });
+ try{
+   g.state.text='snapshot-0';f.bridge.progress(g.origin,g.state);
+   await awaitCondition(()=>started.length===1,'initial blocked progress');
+   for(let i=1;i<=9;i++){
+     g.state.text='snapshot-'+i;
+     f.bridge.progress(g.origin,g.state);
+     await delay(3);
+   }
+   assert.deepEqual(started,['snapshot-0'],'no extra edit is enqueued during an in-flight REST wait');
+   assert.equal(g.registration.progressQueued.size,1);
+   assert.equal(g.registration.progress.size,1,'one latest unsent snapshot');
+   unblock();await delay(15);await f.bridge.idle();
+   assert.deepEqual(started,['snapshot-0','snapshot-9'],'all intermediate snapshots were replaced');
+   assert.equal(g.registration.progressQueued.size,0);
+   assert.equal(g.registration.progress.size,0);
+ }finally{unblock();await g.off();await f.close();}
+});
+
+test('Discord final skips pending snapshots after a blocked in-flight progress edit',async()=>{
+ const f=fixture(),calls=[];
+ let unblock;
+ const wait=new Promise(resolve=>unblock=resolve);
+ const g=discordProgressFixture(f,{
+   progress:async(_origin,body)=>{calls.push('progress:'+body.text);if(calls.length===1)await wait;},
+   send:async(_origin,body)=>{calls.push('final:'+body.text);return{messageId:'final-message'};}
+ });
+ try{
+   g.state.text='snapshot-0';f.bridge.progress(g.origin,g.state);
+   await awaitCondition(()=>calls.length===1,'first edit');
+   for(let i=1;i<=5;i++){g.state.text='snapshot-'+i;f.bridge.progress(g.origin,g.state);await delay(3);}
+   f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[{type:'text',text:'completed-response'}]}}});
+   f.bridge.event(f.session,{type:'turn/end',data:{turn:1,reason:{kind:'completed'}}});
+   assert.equal(g.registration.progress.size,0,'final immediately invalidates latest unsent progress');
+   assert.equal(g.registration.timers.size,0,'final clears pending progress timers');
+   unblock();await delay(15);await f.bridge.idle();
+   assert.deepEqual(calls,['progress:snapshot-0','final:completed-response']);
+   assert.equal(g.registration.progressQueued.size,0);
+ }finally{unblock();await g.off();await f.close();}
+});
+
+test('Discord final bypasses a queued but never-started progress update',async()=>{
+ const f=fixture(),calls=[];
+ let unblock;
+ const gate=new Promise(resolve=>unblock=resolve);
+ const g=discordProgressFixture(f,{
+   progress:async(_origin,body)=>{calls.push('stale-progress:'+body.text);},
+   send:async(_origin,body)=>{calls.push('final:'+body.text);return{messageId:'done'};}
+ });
+ try{
+   // A blocked earlier Discord API action keeps the channel delivery tail busy.
+   void f.bridge.queue(g.registration,g.origin,()=>gate);
+   g.state.text='queued-old';f.bridge.progress(g.origin,g.state);
+   await awaitCondition(()=>g.registration.progressQueued.size===1,'queued progress marker');
+   f.bridge.event(f.session,{type:'turn/end',data:{turn:1,reason:{kind:'completed'}}});
+   unblock();await f.bridge.idle();
+   assert.equal(calls.length,1,'queued stale progress never starts');
+   assert(calls[0].startsWith('final:'));
+ }finally{unblock();await g.off();await f.close();}
+});
+
+test('Ask User waiting suppresses queued Discord progress before showing question',async()=>{
+ const f=fixture(),calls=[];
+ let unblock;
+ const gate=new Promise(resolve=>unblock=resolve);
+ const g=discordProgressFixture(f,{
+   progress:async()=>{calls.push('obsolete-progress');},
+   question:async()=>{calls.push('ask-user');return{messageId:'question'};},
+   send:async()=>({messageId:'unused'})
+ });
+ try{
+   void f.bridge.queue(g.registration,g.origin,()=>gate);
+   g.state.text='pending';f.bridge.progress(g.origin,g.state);
+   await awaitCondition(()=>g.registration.progressQueued.size===1,'pending progress');
+   g.state.waiting=true;
+   void f.bridge.queue(g.registration,g.origin,()=>g.registration.adapter.question(g.origin,{text:'继续？'},[]));
+   unblock();await f.bridge.idle();
+   assert.deepEqual(calls,['ask-user']);
+ }finally{unblock();await g.off();await f.close();}
+});
+
+test('overlapping streaming reasoning, block-end and committed native reasoning preserve natural segment order',async()=>{
+ const f=fixture();
+ try{
+   f.bridge.stream(f.session,{type:'start',turn:1,attemptId:'phase-one',revision:1});
+   f.bridge.stream(f.session,{type:'chunk',attemptId:'phase-one',revision:1,index:0,chunk:{type:'block-start',index:0,blockType:'reasoning'}});
+   f.bridge.stream(f.session,{type:'chunk',attemptId:'phase-one',revision:1,index:1,chunk:{type:'reasoning-delta',index:0,text:'先核对工具'}});
+   f.bridge.stream(f.session,{type:'chunk',attemptId:'phase-one',revision:1,index:2,chunk:{type:'block-end',index:0,block:{type:'reasoning',text:'先核对工具，再查结果'}}});
+   f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[{type:'reasoning',text:'先核对工具，再查结果'},{type:'tool-call',name:'read_file'}]}}});
+   f.bridge.stream(f.session,{type:'start',turn:1,attemptId:'phase-two',revision:1});
+   f.bridge.stream(f.session,{type:'chunk',attemptId:'phase-two',revision:1,index:0,chunk:{type:'block-start',index:0,blockType:'reasoning'}});
+   f.bridge.stream(f.session,{type:'chunk',attemptId:'phase-two',revision:1,index:1,chunk:{type:'reasoning-delta',index:0,text:'最后整理论据'}});
+   f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[{type:'reasoning',text:'最后整理论据'},{type:'text',text:'最终结论'}]}}});
+   f.bridge.adapters.get(JSON.stringify(['feishu','test'])).adapter.showNarration=true;
+   f.bridge.event(f.session,{type:'turn/end',data:{turn:1,reason:{kind:'completed'}}});
+   await f.bridge.idle();
+   assert.equal(f.sent.at(-1).body.text,'最终结论');
+   assert.deepEqual(f.sent.at(-1).body.drafts,['先核对工具，再查结果','最后整理论据'],'no repeated stream or commit blocks and chronological order preserved');
+ }finally{await f.close();}
+});
+
+test('Feishu final card contains only the last native non-tool reply, not accumulated progress drafts',async()=>{
+ const f=fixture();
+ try{
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[
+   {type:'reasoning',text:'模型内部思考，不应该进入公开回复'},
+   {type:'text',text:'草稿：先读取文件并检查问题。'},
+   {type:'tool-call',name:'read_file'}]}}});
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[
+   {type:'text',text:'阶段性说明：再跑一次命令。'},
+   {type:'tool-call',name:'pwsh'}]}}});
+  await flushProgress(f);
+  assert(f.progress.some(x=>x.body.activity.timeline.some(t=>t.type==='public-draft'&&t.text.includes('阶段性说明'))));
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[
+   {type:'text',text:'这才是真正的最终答复。\n\n内容完整，不包含工具前言。'}]}}});
+  f.bridge.event(f.session,{type:'turn/end',data:{turn:1,reason:{kind:'completed'}}});
+  await f.bridge.idle();
+  assert.equal(f.sent.length,1);
+  assert.equal(f.sent[0].body.text,'这才是真正的最终答复。\n\n内容完整，不包含工具前言。');
+  assert(!f.sent[0].body.text.includes('阶段性说明'));
+  assert(!f.sent[0].body.text.includes('草稿：'));
+ }finally{await f.close();}
+});
+
+test('Feishu final does not expose tool-call commentary when no final assistant reply was generated',async()=>{
+ const f=fixture();
+ try{
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[
+   {type:'text',text:'临时计划：开始执行工作。'},{type:'tool-call',name:'pwsh'}]}}});
+  f.bridge.event(f.session,{type:'turn/end',data:{turn:1,reason:{kind:'completed'}}});
+  await f.bridge.idle();
+  assert.equal(f.sent[0].body.text,'本轮已完成。');
+ }finally{await f.close();}
+});
+
+test('Feishu treats latest native standalone assistant message as final, rather than multiple intermediate messages',async()=>{
+ const f=fixture();
+ try{
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[{type:'text',text:'早期已提交说明'}]}}});
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[{type:'text',text:'最新完整答复'}]}}});
+  f.bridge.event(f.session,{type:'turn/end',data:{turn:1,reason:{kind:'completed'}}});
+  await f.bridge.idle();
+  assert.equal(f.sent[0].body.text,'最新完整答复');
+ }finally{await f.close();}
+});
+
+test('Discord final marks only earlier native committed public messages as draft prelude',async()=>{
+ const f=fixture();
+ try{
+  const reg=f.bridge.adapters.get(JSON.stringify(['feishu','test']));
+  await f.unregister();
+  const unregister=f.bridge.register('discord','test',{send:async(origin,body)=>{f.sent.push({origin,body});return {messageId:'done'};}});
+  const from={...f.origin,provider:'discord'};
+  f.store.setOwner('discord','test','user-a');
+  f.store.claim({key:'discord-draft',requestId:'discord-draft',sessionId:f.session.id,origin:from,payload:'user'});
+  f.bridge.claimed(f.session,'discord-draft',2);
+  const event=(turn,content)=>f.bridge.event(f.session,{type:'assistant/message',data:{turn,message:{content}}});
+  event(2,[{type:'text',text:'先检查配置。\n\n第二段备注。'},{type:'tool-call',name:'read_file'}]);
+  event(2,[{type:'reasoning',text:'PRIVATE-THOUGHT'},{type:'text',text:'然后执行测试。'},{type:'tool-call',name:'pwsh'}]);
+  event(2,[{type:'text',text:'**正式结论**\n\n所有检查通过。'}]);
+  f.bridge.event(f.session,{type:'turn/end',data:{turn:2,reason:{kind:'completed'}}});
+  await f.bridge.idle();
+  const b=f.sent.find(v=>v.origin.provider==='discord').body;
+  assert.equal(b.draftPrelude,'先检查配置。\n\n第二段备注。\n\n然后执行测试。');
+  assert.equal(b.finalReplyText,'**正式结论**\n\n所有检查通过。');
+  assert.equal(b.text,b.draftPrelude+'\n\n'+b.finalReplyText);
+  assert(!JSON.stringify(b).includes('PRIVATE-THOUGHT'));
+  await unregister();
+ }finally{await f.close();}
+});
+
+test('Discord one-message reply and uncommitted stream reasoning do not create artificial draft prelude',async()=>{
+ const f=fixture();
+ try{
+  await f.unregister();
+  const off=f.bridge.register('discord','test',{send:async(origin,body)=>{f.sent.push({origin,body});return{messageId:'ok'};}});
+  const origin={...f.origin,provider:'discord'};
+  f.store.claim({key:'single-response',requestId:'single-response',sessionId:f.session.id,origin,payload:'text'});
+  f.bridge.claimed(f.session,'single-response',3);
+  f.bridge.stream(f.session,{type:'start',turn:3,attemptId:'attempt',revision:1});
+  f.bridge.stream(f.session,{type:'chunk',attemptId:'attempt',revision:1,index:0,chunk:{type:'block-start',index:0,blockType:'text'}});
+  f.bridge.stream(f.session,{type:'chunk',attemptId:'attempt',revision:1,index:1,chunk:{type:'text-delta',index:0,text:'未提交文本'}});
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:3,message:{content:[{type:'text',text:'真正的完整回复'}]}}});
+  f.bridge.event(f.session,{type:'turn/end',data:{turn:3,reason:{kind:'completed'}}});
+  await f.bridge.idle();
+  const body=f.sent.find(v=>v.origin.provider==='discord').body;
+  assert.equal(body.text,'真正的完整回复');
+  assert.equal(body.draftPrelude,undefined);
+  assert.equal(body.finalReplyText,undefined);
+  await off();
+ }finally{await f.close();}
 });

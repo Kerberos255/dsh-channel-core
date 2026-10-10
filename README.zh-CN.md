@@ -43,3 +43,9 @@ Profile 名称按实际环境替换。首次安装或更新代码后重启 DSH�
 相关：[状态卡片](https://github.com/Kerberos255/dsh-status-cards) · [Dream 与长期记忆](https://github.com/Kerberos255/dsh-memory-dreaming) · [无损上下文](https://github.com/Kerberos255/dsh-lossless-context)。
 
 许可证：[MIT](LICENSE)。
+
+## 流式进度与最终回复排版
+
+Discord 支持思考、草稿与工具进度的滚动展示。在原生助手消息明确区分「工具调用前的已提交阶段性说明」与「单独的最终回复」时，完成消息将前者放入 Discord 原生引用块，正式回复保持正常 Markdown 和独立脚注；不会把内部推理、未提交草稿或 Ask User 已发布内容重复引用。
+
+飞书支持 CardKit 组件流式更新，并保留兼容整卡更新的安全回退。思考折叠卡会减少与正文重复的段落，标题采用角色名，状态、耗时、模型、上下文、Token 和缓存指标可以分别选择是否显示。两个渠道的刷新频率和进度长度可独立调整。真实平台权限、代理延迟和交互体验仍需在实际机器人环境中验证。

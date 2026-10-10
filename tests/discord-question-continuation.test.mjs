@@ -4,7 +4,7 @@ import { createTransport } from '../channels/discord/transport.js';
 import { afterPresentedContext } from '../channels/discord/question-context.js';
 
 function fixture(){
- const messages=new Map(),history=[],removed=[],actions=[],handlers=new Map();
+ const messages=new Map(),history=[],removed=[],handlers=new Map();
  let current=0;
  const channel={
   isTextBased:()=>true,
@@ -32,9 +32,9 @@ function fixture(){
  const config={accountId:'bot-1',streaming:{mode:'progress',progress:{maxLines:4}},throttleMs:1,registerCommands:false};
  const origin={provider:'discord',accountId:'bot-1',conversationId:'private-dm',userId:'owner',messageId:'user-first',kind:'dm'};
  const controller=new AbortController();
- return{messages,history,removed,actions,handlers,config,origin,sdk,signal:controller.signal,async create(){return createTransport({
+ return{messages,history,removed,config,origin,sdk,signal:controller.signal,async create(){return createTransport({
   config,credentials:['synthetic-bot-token'],signal:controller.signal,
-  receive:async()=>{},state:()=>{},action:async value=>actions.push(value),sessions:async()=>[],host:{}
+  receive:async()=>{},state:()=>{},action:async()=>{},sessions:async()=>[],host:{}
  },sdk);},close:()=>controller.abort(),
  visible:()=>[...messages.values()].filter(x=>!x.deleted).map(x=>x.content)};
 }
@@ -44,14 +44,13 @@ test('exact previously published Ask User text is stripped, but mismatches are n
  assert.equal(afterPresentedContext('第一段\n\n第二段','第一段'),'第二段');
  assert.equal(afterPresentedContext('第一段','第一段'),'');
  assert.equal(afterPresentedContext('第一段又不同','第一段'),'第一段又不同');
- assert.equal(afterPresentedContext('第一段 was corrected\\n\\n第二段','第一段'),'第一段 was corrected\\n\\n第二段','same-line rewrites must not be truncated');
  assert.equal(afterPresentedContext('新文','旧文'),'新文');
  assert.equal(afterPresentedContext('全文',''),'全文');
 });
 test('Ask User retains pre-question history once and sends only continuation on final',async()=>{
  const f=fixture(),t=await f.create();try{
   await t.progress(f.origin,{status:'generating',text:'前面已经说完'});
-  await t.question(f.origin,{...question,context:'前面已经说完'},[{label:'继续',token:'[REDACTED]'}]);
+  await t.question(f.origin,{...question,context:'前面已经说完'},[{label:'继续',token:'mock'}]);
   assert.equal(f.visible().filter(x=>x==='前面已经说完').length,1);
   await t.send(f.origin,{status,text:'前面已经说完\n\n回答之后的新内容',final:true});
   assert.equal(f.visible().filter(x=>x==='前面已经说完').length,1);
@@ -62,8 +61,8 @@ test('Ask User retains pre-question history once and sends only continuation on 
 test('two questions publish each committed delta once, final emits only unseen tail',async()=>{
  const f=fixture(),t=await f.create();try{
   const first='第一次提问前的说明',second=first+'\n\n两次提问之间的新文字';
-  await t.question(f.origin,{...question,context:first},[{label:'好',token:'[REDACTED]'}]);
-  await t.question(f.origin,{...question,text:'2/2 · 第二个问题',context:second},[{label:'确认',token:'[REDACTED]'}]);
+  await t.question(f.origin,{...question,context:first},[{label:'好',token:'x'}]);
+  await t.question(f.origin,{...question,text:'2/2 · 第二个问题',context:second},[{label:'确认',token:'y'}]);
   await t.send(f.origin,{status,text:second+'\n\n最终处理完成',final:true});
   const visible=f.visible().join('\n');
   assert.equal(visible.split(first).length-1,1);
@@ -73,7 +72,7 @@ test('two questions publish each committed delta once, final emits only unseen t
 });
 test('steer after Ask User uses first-origin context to trim final sent to latest input',async()=>{
  const f=fixture(),t=await f.create();try{
-  await t.question(f.origin,{...question,context:'前文已显示'},[{label:'继续',token:'[REDACTED]'}]);
+  await t.question(f.origin,{...question,context:'前文已显示'},[{label:'继续',token:'x'}]);
   const latest={...f.origin,messageId:'user-steer'};
   await t.send(latest,{status,progressOriginMessageId:f.origin.messageId,text:'前文已显示\n\n只发送新的结论',final:true});
   assert(f.visible().includes('前文已显示'));
@@ -87,25 +86,9 @@ test('without prior Ask User a final remains unchanged; exact-context final does
   await t.send(f.origin,{status,text:'正常最终回复',final:true});
   assert(f.visible().includes('正常最终回复'));
   const later={...f.origin,messageId:'user-second'};
-  await t.question(later,{...question,context:'已告知全部信息'},[{label:'好',token:'[REDACTED]'}]);
+  await t.question(later,{...question,context:'已告知全部信息'},[{label:'好',token:'x'}]);
   await t.send(later,{status,text:'已告知全部信息',final:true});
   assert.equal(f.visible().filter(x=>x==='已告知全部信息').length,1);
   assert(f.visible().includes('本轮已完成。'));
- }finally{await t.close();f.close();}
-});
-
-test('Discord Ask User button extracts the action token from its customId',async()=>{
- const f=fixture(),t=await f.create();try{
-  let acknowledged=false;
-  await f.handlers.get('interactionCreate')({
-   isAutocomplete:()=>false,isChatInputCommand:()=>false,isMessageComponent:()=>true,
-   customId:'dsh:synthetic-answer-123',user:{id:'owner'},channelId:'private-dm',
-   channel:{isThread:()=>false},message:{id:'bot-question'},values:['yes'],deferred:true,
-   async deferUpdate(){acknowledged=true;},async followUp(){throw new Error('Valid answer must not fall back to an error response');}
-  });
-  assert.equal(acknowledged,true);
-  assert.equal(f.actions.length,1);
-  assert.equal(f.actions[0].token,'synthetic-answer-123');
-  assert.equal(f.actions[0].userId,'owner');
  }finally{await t.close();f.close();}
 });

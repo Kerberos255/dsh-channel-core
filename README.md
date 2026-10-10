@@ -43,3 +43,9 @@ Run `npm test` for portable regressions. **A green CI run does not prove live Di
 Related: [Status Cards](https://github.com/Kerberos255/dsh-status-cards) · [Dream & Memory](https://github.com/Kerberos255/dsh-memory-dreaming) · [Lossless Context](https://github.com/Kerberos255/dsh-lossless-context).
 
 MIT licensed. See [LICENSE](LICENSE). Historical release notes: [CHANGELOG.md](CHANGELOG.md).
+
+## Streaming and progress
+
+Discord shows thought, draft and tool activity in a single rolling progress message. When native assistant messages include separate committed interim text and a final reply, the completed message presents the interim text as a native Markdown blockquote and keeps the formal answer outside it. The runtime footer remains optional; long replies are split to fit Discord message limits. Ask User and private reasoning are kept separate.
+
+Feishu supports CardKit component-level streaming with an IM-card compatibility fallback, collapsed non-duplicative reasoning, agent role labels, and independently configurable runtime footer fields. The per-channel refresh intervals and progress budgets are configurable; real platform permissions and latency still need validation in your own environment.

@@ -1,7 +1,8 @@
 import { checkAbort, discordAttachment, splitDiscord, statusLabel } from 'dsh-channel-core/transport-utils';
-import { renderProgress,renderNotice } from './progress.js';
+import { renderProgress,renderNotice,renderHeading,footerSuffix } from './progress.js';
+import { renderFooter } from './footer.js';
 import { afterPresentedContext } from './question-context.js';
-import { convertMarkdownTables } from './tables.js';
+import { formatFinalWithQuotedDraft } from './final-format.js';
 import { currentSelection, decodeModel, defaultEffort, describeSelection, effortChoices, modelChoices } from './model-commands.js';
 
 // Discord 的"正在输入"提示约 10 秒后自动消失，所以按心跳刷新；上限是保险丝，
@@ -35,7 +36,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
   const sdk=sdkOverride??await import('discord.js');
   const client=new sdk.Client({intents:[sdk.GatewayIntentBits.Guilds,sdk.GatewayIntentBits.GuildMessages,sdk.GatewayIntentBits.DirectMessages,sdk.GatewayIntentBits.MessageContent],partials:[sdk.Partials.Channel],
     rest:{timeout:15000,retries:0},makeCache:sdk.Options.cacheWithLimits({MessageManager:0,ThreadManager:100,GuildMemberManager:0,PresenceManager:0})});
-  const progress=new Map(),presented=new Map(),interactions=new Map(),questionContexts=new Map(),questions=new Map(),listeners=[];
+  const progress=new Map(),presented=new Map(),interactions=new Map(),questionContexts=new Map(),questions=new Map(),progressIdentities=new Map(),listeners=[];
   const key=origin=>JSON.stringify([origin.conversationId,origin.threadId??'',origin.messageId]);
   const on=(name,handler)=>{client.on(name,handler);listeners.push(()=>client.off(name,handler));};
   on('messageCreate',async message=>{
@@ -134,7 +135,23 @@ export async function createTransport({config,credentials,signal,receive,state,a
     entry.timer.unref?.();
   }
   const options=(content,origin,body)=>({content,allowedMentions:{parse:[],repliedUser:false},...(origin.messageId&&!origin.messageId.startsWith('interaction:')?{reply:{messageReference:origin.messageId,failIfNotExists:false}}:{}),...(body.id?{nonce:body.id.slice(0,24),enforceNonce:true}:{})});
-  async function present(origin,body,actions=[],content=renderNotice(body)){
+  const runtimeMetrics=new Map();
+  async function readRuntimeMetrics(sessionId,force=false){
+    if(!sessionId||!host?.runtimeMetrics)return {};
+    const previous=runtimeMetrics.get(sessionId);
+    if(!force&&previous&&Date.now()-previous.at<6000)return previous.value;
+    try{
+      const value=await host.runtimeMetrics(sessionId);
+      if(value&&typeof value==='object'){
+        runtimeMetrics.set(sessionId,{at:Date.now(),value});
+        if(runtimeMetrics.size>256)runtimeMetrics.delete(runtimeMetrics.keys().next().value);
+        return value;
+      }
+    }catch{/* Footer availability never blocks message delivery. */}
+    return previous?.value??{};
+  }
+  const displayIdentity=metrics=>({icon:config.displayIcon,name:metrics?.agentName||host?.defaultAgentName?.()||'Agent'});
+  async function present(origin,body,actions=[],content=renderNotice(body,displayIdentity())){
     const id=key(origin),existing=progress.get(id);
     const components=[];
     for(let i=0;i<Math.min(actions.length,25);i+=5)components.push({type:1,components:actions.slice(i,i+5).map(item=>({type:2,style:2,label:item.label.slice(0,80),custom_id:'dsh:'+item.token}))});
@@ -143,7 +160,8 @@ export async function createTransport({config,credentials,signal,receive,state,a
     const channel=await channelFor(origin);
     if(existing){await channel.messages.edit(existing,{content,components,allowedMentions:{parse:[]}});presented.set(id,signature);return {messageId:existing};}
     const interaction=interactions.get(origin.messageId);
-    const message=interaction?await interaction.editReply({content,components,allowedMentions:{parse:[]}}):await channel.send({...options(content,origin,body),components});progress.set(id,message.id);presented.set(id,signature);return {messageId:message.id};
+    const message=interaction?await interaction.editReply({content,components,allowedMentions:{parse:[]}}):await channel.send({...options(content,origin,body),components});
+    progress.set(id,message.id);presented.set(id,signature);return {messageId:message.id};
   }
   function preserve(origin){
     // The current Discord message becomes history; subsequent progress needs a
@@ -162,7 +180,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
     }
     // Never clip a question or its custom-answer token. Keep buttons on its last
     // message and only edit that message when a multi-select choice changes.
-    const text='**DeepSeek · '+statusLabel(body.status)+'**\n'+(body.text||'请回答。');
+    const text=renderHeading(body.status,progressIdentities.get(id)??displayIdentity())+'\n'+(body.text||'请回答。');
     const parts=splitDiscord(text);
     if(questions.get(id)!==text){
       for(const part of parts.slice(0,-1)){
@@ -171,14 +189,24 @@ export async function createTransport({config,credentials,signal,receive,state,a
     }
     const sent=await present(origin,body,actions,parts.at(-1));questions.set(id,text);return sent;
   }
-  let closing;const close=()=>closing??=(async()=>{signal.removeEventListener('abort',onAbort);listeners.splice(0).forEach(dispose=>dispose());await client.destroy();typing.forEach(entry=>{if(entry.timer)clearInterval(entry.timer);});typing.clear();progress.clear();presented.clear();interactions.clear();questionContexts.clear();questions.clear();})();
+  let closing;const close=()=>closing??=(async()=>{signal.removeEventListener('abort',onAbort);listeners.splice(0).forEach(dispose=>dispose());await client.destroy();typing.forEach(entry=>{if(entry.timer)clearInterval(entry.timer);});typing.clear();progress.clear();presented.clear();interactions.clear();questionContexts.clear();questions.clear();progressIdentities.clear();})();
   const onAbort=()=>{void close().catch(()=>{});};signal.addEventListener('abort',onAbort,{once:true});
   return {
     throttleMs:config.throttleMs,
+    coalesceProgress:true,
+    // Discord shows draft only while running; final delivery stores no draft text.
+    showNarration:false,
     details:()=>({applicationId:client.application?.id??'',botId:client.user?.id??''}),
     async start(){await client.login(credentials[0]);checkAbort(signal);if(config.registerCommands)for(const command of slashCommands)await client.application.commands.create(command);},
     close,
-    progress:config.streaming.mode!=='off'?(origin,body)=>{if(body?.final===true)stopTyping(origin);else startTyping(origin);return present(origin,body,[],renderProgress(body,config.streaming));}:undefined,
+    progress:config.streaming.mode!=='off'?async(origin,body)=>{
+      if(body?.final===true)stopTyping(origin);else startTyping(origin);
+      const metrics=await readRuntimeMetrics(body.sessionId);
+      const footer=renderFooter(config.streaming.footer,body,metrics);
+      const identity=displayIdentity(metrics);
+      progressIdentities.set(key(origin),identity);
+      return present(origin,body,[],renderProgress(body,config.streaming,footer,identity));
+    }:undefined,
     question,
     async send(origin,body){
       stopTyping(origin);
@@ -189,9 +217,12 @@ export async function createTransport({config,credentials,signal,receive,state,a
       const context=questionContexts.get(key(origin))??(oldContextKey?questionContexts.get(oldContextKey):null);
       const remainder=afterPresentedContext(body.text,context);
       const finalText=remainder||(context&&String(body.text??'')===context?(body.status==='completed'?'本轮已完成。':body.status==='cancelled'?'本轮已停止。':'本轮已结束。'):body.text);
-      const parts=splitDiscord(convertMarkdownTables(finalText));
-      // Native Steer uses one Turn and one progress draft, but the final must be
-      // sent AFTER the newest user input instead of editing that older draft.
+      const metrics=await readRuntimeMetrics(body.sessionId,true);
+      const footer=renderFooter(config.streaming.footer,body,metrics);
+      const footnote=footerSuffix(footer);
+      const parts=body.status==='completed'
+        ?formatFinalWithQuotedDraft(finalText,{draftPrelude:body.draftPrelude,finalReplyText:body.finalReplyText,footnote})
+        :formatFinalWithQuotedDraft(finalText,{footnote});
       const oldKey=body.progressOriginMessageId?key({...origin,messageId:body.progressOriginMessageId}):null;
       const oldProgress=oldKey&&oldKey!==key(origin)?progress.get(oldKey):null;
       if(oldProgress)stopTyping({...origin,messageId:body.progressOriginMessageId});
@@ -203,13 +234,13 @@ export async function createTransport({config,credentials,signal,receive,state,a
         const message=i===0&&existing?await channel.messages.edit(existing,{content,components:[],allowedMentions:{parse:[]}}):interaction?await interaction.editReply({content,components:[],allowedMentions:{parse:[]}}):await channel.send(options(content,origin,{id:body.id?body.id.slice(0,20)+'-'+i:undefined}));
         first??=message.id;
       }
-      // Retire the old status only after the new final is confirmed. Cleanup
-      // failures must not mark a successfully delivered final as uncertain.
+      // Retire old Steer progress only after a confirmed final message.
       if(oldProgress){
         try{await channel.messages.delete(oldProgress);progress.delete(oldKey);presented.delete(oldKey);}
         catch(error){state('Discord 已发出最终回复，但旧进度消息清理失败：'+(error.code??'unknown'));}
       }
-      progress.delete(key(origin));presented.delete(key(origin));interactions.delete(origin.messageId);questionContexts.delete(key(origin));questions.delete(key(origin));
+      progress.delete(key(origin));presented.delete(key(origin));interactions.delete(origin.messageId);questionContexts.delete(key(origin));questions.delete(key(origin));progressIdentities.delete(key(origin));
+      if(oldKey)progressIdentities.delete(oldKey);
       if(oldContextKey&&oldContextKey!==key(origin)){questionContexts.delete(oldContextKey);questions.delete(oldContextKey);}
       return {messageId:first};
     },

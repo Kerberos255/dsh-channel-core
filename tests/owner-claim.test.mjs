@@ -72,8 +72,8 @@ test('new owner fields are compatible with legacy configs and displayed on both 
    assert.throws(()=>schema.validate({...config,ownerMode:'manual',ownerUserId:''}));
    assert.throws(()=>schema.validate({...config,ownerMode:'unknown'}));
  }
- const pages=JSON.parse(fs.readFileSync(path.join(process.cwd(),'../_shared/plugin-settings/pages.json'),'utf8'));
- for(const channel of ['dsh-channel-discord','dsh-channel-feishu']){
+ const pages=JSON.parse(fs.readFileSync(new URL('../../_shared/plugin-settings/pages.json',import.meta.url),'utf8'));
+ for(const channel of ['dsh-channel-core-discord','dsh-channel-core-feishu']){
    const fields=pages[channel].fields;
    for(const key of ['ownerMode','ownerUserId','ownerStatus'])assert(fields.some(item=>item.key===key),channel+': '+key);
  }

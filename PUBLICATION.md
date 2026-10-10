@@ -33,3 +33,12 @@ Ask User 已发送的前文仅在原生 assistant/message 的明确换行边界�
 ## 0.4.13 · Discord Ask User 交互按钮修复
 
 修复公开源码中 Discord 按钮交互回调错误保留的占位表达式，改为从 `interaction.customId` 的 `dsh:` 前缀之后提取真实动作标识。新增模拟按钮测试，验证按钮动作实际抵达原生处理器，而不仅仅是发送提问消息；原有重复正文与连续 Ask User 测试保持通过。
+
+## 2026-10-11 public synchronization
+
+Production source is synchronized to the local Channel Core plugin. The public
+settings bundle contains only the Discord and Feishu page definitions, extracted
+from shared local settings; no user configuration, secrets, sessions, logs, or
+runtime databases are included. Existing public documentation, license and
+workflow are retained. Live CardKit authorization and Discord proxy behavior
+must still be validated in a real bot deployment.
