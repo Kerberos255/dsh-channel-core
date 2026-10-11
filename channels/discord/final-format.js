@@ -12,8 +12,19 @@ export function quotePublicDraft(value){
   return String(value??'').replace(/\r\n?/g,'\n').split('\n').map(line=>'> '+line).join('\n');
 }
 
+/** Show already-committed Ask User context as native quoted draft history.
+ * The final delivery will still strip this exact published prefix, so the
+ * visible draft is never sent twice. Chunk before quoting to leave room for
+ * quote markers on each physical line, including blank lines.
+ */
+export function formatAskUserDraft(value){
+  const draft=String(value??'');
+  if(!draft.trim())return [];
+  return splitDiscord(draft,800).map((part,i)=>(i===0?HEADER:'')+quotePublicDraft(part));
+}
+
 /** Format only native committed interim messages. Never quote reasoning,
- * uncommitted stream text, tools, or a user-question prelude already sent.
+ * uncommitted stream text, tools, or duplicate Ask User context already sent.
  */
 export function formatFinalWithQuotedDraft(text,{draftPrelude='',finalReplyText='',footnote=''}={}){
   const current=String(text??'');
