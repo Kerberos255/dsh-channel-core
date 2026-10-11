@@ -3,7 +3,7 @@ import { defineConfig } from '../../lib/channel-plugin-settings/remote-config.js
 import { ConfigError } from '../../lib/channel-plugin-settings/file-config.js';
 const ref=v=>/^[A-Z_][A-Z0-9_]*$/.test(v);
 const id=v=>v.trim().length>0&&v.length<=256&&!/[\x00-\x1f]/.test(v);
-const progressDefaults={toolProgress:true,commentary:true,narration:false,toolDetail:true,maxLines:9,maxLineChars:240,draftMaxChars:600};
+const progressDefaults={toolProgress:true,commentary:true,draft:true,narration:false,toolDetail:true,maxLines:9,maxLineChars:240,draftMaxChars:600};
 const footerDefaults={status:false,elapsed:false,model:true,context:true,tokens:false,cache:false};
 const invalid=()=>{throw new ConfigError('invalid-config','streaming 配置无效，请检查回复模式及进度选项');};
 function streaming(value){
@@ -16,7 +16,7 @@ function streaming(value){
   const footer={...footerDefaults,...footerInput};
   if(Object.values(footer).some(v=>typeof v!=='boolean'))invalid();
   const progress={...progressDefaults,...input};
-  if(typeof progress.toolProgress!=='boolean'||typeof progress.commentary!=='boolean'||typeof progress.narration!=='boolean'||typeof progress.toolDetail!=='boolean'||!Number.isSafeInteger(progress.maxLines)||progress.maxLines<1||progress.maxLines>12||!Number.isSafeInteger(progress.maxLineChars)||progress.maxLineChars<40||progress.maxLineChars>300||!Number.isSafeInteger(progress.draftMaxChars)||progress.draftMaxChars<120||progress.draftMaxChars>1000)invalid();
+  if(typeof progress.toolProgress!=='boolean'||typeof progress.commentary!=='boolean'||typeof progress.draft!=='boolean'||typeof progress.narration!=='boolean'||typeof progress.toolDetail!=='boolean'||!Number.isSafeInteger(progress.maxLines)||progress.maxLines<1||progress.maxLines>12||!Number.isSafeInteger(progress.maxLineChars)||progress.maxLineChars<40||progress.maxLineChars>300||!Number.isSafeInteger(progress.draftMaxChars)||progress.draftMaxChars<120||progress.draftMaxChars>1000)invalid();
   const cardEngine=value.cardEngine??'cardkit';
   if(!['cardkit','patch'].includes(cardEngine))invalid();
   return {mode,progress,footer,cardEngine};
