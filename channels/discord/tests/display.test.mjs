@@ -209,7 +209,7 @@ test('actual Discord completed delivery wraps committed public prelude in quote,
   await t.progress(origin,{status:'tool-running',activity:{timeline:[]}});
   await t.send(origin,{sessionId:'session',status:'completed',text:draft+'\n\n'+formal,draftPrelude:draft,finalReplyText:formal});
   const message=f.calls.filter(call=>call.kind==='edit').at(-1).body.content;
-  assert(message.includes('**📝 过程草稿**\n\n> 先看配置。\n> \n> 再执行测试。'));
+  assert(message.includes('> 先看配置。\n> \n> 再执行测试。'));
   assert(message.includes('**✅ 正式回复**\n\n**检查结果**\n\n- 测试通过'));
   assert(message.endsWith('-# deepseek/v4 · 上下文 36k tokens'));
   assert.equal(f.calls.filter(call=>call.kind==='send').length,1);
@@ -225,7 +225,7 @@ test('Ask User already published context is not re-quoted or repeated in Discord
   await t.send(origin,{status:'completed',text:'已发布的阶段内容\n\n最终答案',
     draftPrelude:'已发布的阶段内容',finalReplyText:'最终答案'});
   const quoted=f.calls.filter(call=>call.kind==='edit').find(call=>call.body.content.includes('> 已发布的阶段内容'))?.body.content;
-  assert(quoted?.startsWith('**📝 过程草稿**\n\n> '),'Ask User drafts are quoted before the question');
+  assert(quoted?.startsWith('> '),'Ask User drafts are quoted before the question');
   const final=f.calls.filter(call=>call.kind==='edit').at(-1).body.content;
   assert(final.startsWith('最终答案'));
   assert(!final.includes('过程草稿'),'final continuation must not duplicate published draft');

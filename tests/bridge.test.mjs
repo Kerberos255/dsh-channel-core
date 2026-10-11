@@ -101,14 +101,23 @@ test('delivery state survives restart without blindly resending ambiguous reques
   assert(f.bridge.store.claim(row.id));new DeliveryStore(f.store.db);
   assert.equal(f.bridge.store.get(row.id).state,'uncertain');assert.equal(f.bridge.store.pending('feishu','test').length,0);await f.close();
 });
-test('question tokens bind actor and channel, handle multi-select, expire after first settlement',async()=>{
-  const f=fixture();const promise=f.bridge.interactions.request({agent:f.agent,questions:[{id:'q',question:'选哪些？',multiSelect:true,options:[{label:'甲'},{label:'乙'}]}]},()=>assert.fail('unexpected fallback'));
-  await f.bridge.idle();let actions=f.questions.at(-1).actions;
-  await assert.rejects(f.bridge.answer({...f.origin,userId:'attacker',token:actions[0].token}),/actor-mismatch/);
-  await f.bridge.answer({...f.origin,token:actions[0].token});await f.bridge.idle();
-  await assert.rejects(f.bridge.answer({...f.origin,token:actions[0].token}),/stale/);
-  actions=f.questions.at(-1).actions;await f.bridge.answer({...f.origin,token:actions.at(-1).token});
-  assert.deepEqual(await promise,{answers:[{id:'q',selected:['甲']}]});assert.equal(f.store.db.prepare('SELECT count(*) AS n FROM interactions').get().n,0);await f.close();
+test('question tokens bind actor and channel, support native multi-select without UUID rotation',async()=>{
+ const f=fixture();try{
+  const promise=f.bridge.interactions.request({agent:f.agent,questions:[{id:'q',question:'选哪些？',multiSelect:true,options:[{label:'甲'},{label:'乙'}]}]},()=>assert.fail('unexpected fallback'));
+  await f.bridge.idle();
+  const ui=f.questions.at(-1).body.ui;
+  assert.equal(f.questions.at(-1).actions.length,0);
+  await assert.rejects(f.bridge.answer({...f.origin,userId:'attacker',token:ui.submitToken,selectedValues:['0']}),/actor-mismatch/);
+  const first=await f.bridge.answer({...f.origin,token:ui.selectToken,values:['0','1']});
+  assert.equal(first.selectedCount,2);
+  await f.bridge.answer({...f.origin,token:ui.selectToken,values:['0']});
+  assert.equal(f.questions.length,1,'selection does not rotate UUIDs or redraw the question');
+  const completed=await f.bridge.answer({...f.origin,token:ui.submitToken,selectedValues:['0']});
+  assert.deepEqual(completed.answered,[{question:'选哪些？',selected:['甲']}]);
+  assert.deepEqual(await promise,{answers:[{id:'q',selected:['甲']}]});
+  await assert.rejects(f.bridge.answer({...f.origin,token:ui.selectToken,values:['1']}),/stale/);
+  assert.equal(f.store.db.prepare('SELECT count(*) AS n FROM interactions').get().n,0);
+ }finally{await f.close();}
 });
 test('abort invalidates approval capabilities; only original actor can grant once',async()=>{
   const f=fixture(),abort=new AbortController();let promise=f.bridge.interactions.request({agent:f.agent,toolName:'exec',reason:'运行测试',signal:abort.signal},()=>assert.fail(),'approval');
@@ -124,22 +133,53 @@ test('custom answers require explicit token syntax and cover multiple questions'
   await f.bridge.answerText(f.origin,token+' 第二答');assert.deepEqual((await promise).answers.map(answer=>answer.custom),['第一答','第二答']);await f.close();
 });
 
-test('questions carry committed public prelude through every selection without private drafts',async()=>{
+test('questions preserve committed prelude through one atomic multi-select submission',async()=>{
  const f=fixture();try{
-  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[{type:'think',text:'PRIVATE-REASONING'},{type:'text',text:'已经找到了两个可行方案。'},{type:'tool-call',name:'user_questions',arguments:{private:'PRIVATE-ARGUMENT'}}]}}});
-  f.bridge.stream(f.session,{type:'start',turn:1,attemptId:'unfinished',revision:1});
-  for(const [index,chunk] of [{type:'block-start',index:0,blockType:'text'},{type:'text-delta',index:0,text:'UNCOMMITTED-DRAFT'}].entries())f.bridge.stream(f.session,{type:'chunk',attemptId:'unfinished',revision:1,index,chunk});
-  const promise=f.bridge.interactions.request({agent:f.agent,questions:[{id:'a',question:'选哪些？',multiSelect:true,options:[{label:'甲'},{label:'乙'}]},{id:'b',question:'是否继续？',options:[{label:'继续'}]}]},()=>assert.fail());
-  await f.bridge.idle();let question=f.questions.at(-1);
-  assert.equal(question.body.context,'已经找到了两个可行方案。');
-  assert(!JSON.stringify(question.body).includes('PRIVATE'));assert(!JSON.stringify(question.body).includes('UNCOMMITTED'));
-  await f.bridge.answer({...f.origin,token:question.actions[0].token});await f.bridge.idle();question=f.questions.at(-1);
-  assert.equal(question.body.context,'已经找到了两个可行方案。');
-  await f.bridge.answer({...f.origin,token:question.actions.at(-1).token});await f.bridge.idle();question=f.questions.at(-1);
-  assert.equal(question.body.context,'已经找到了两个可行方案。');assert(question.body.text.includes('是否继续？'));
-  await f.bridge.answer({...f.origin,token:question.actions[0].token});assert.equal((await promise).answers.length,2);
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[
+   {type:'think',text:'PRIVATE-REASONING'},
+   {type:'text',text:'已经找到了两个可行方案。'},
+   {type:'tool-call',name:'user_questions',arguments:{private:'PRIVATE-ARGUMENT'}}
+  ]}}});
+  const promise=f.bridge.interactions.request({agent:f.agent,questions:[
+   {id:'a',question:'选哪些？',multiSelect:true,options:[{label:'甲'},{label:'乙'}]},
+   {id:'b',question:'是否继续？',options:[{label:'继续'}]}
+  ]},()=>assert.fail());
+  await f.bridge.idle();
+  let current=f.questions.at(-1);
+  assert.equal(current.body.context,'已经找到了两个可行方案。');
+  assert(!JSON.stringify(current.body).includes('PRIVATE'));
+  await f.bridge.answer({...f.origin,token:current.body.ui.submitToken,selectedValues:['0','1']});
+  await f.bridge.idle();current=f.questions.at(-1);
+  assert.equal(current.body.context,'已经找到了两个可行方案。');
+  assert(current.body.text.includes('是否继续？'));
+  const completed=await f.bridge.answer({...f.origin,token:current.actions.find(a=>a.label==='继续').token});
+  assert.deepEqual(completed.answered,[{question:'选哪些？',selected:['甲','乙']},{question:'是否继续？',selected:['继续']}]);
+  assert.deepEqual((await promise).answers.map(a=>a.selected),[['甲','乙'],['继续']]);
  }finally{await f.close();}
 });
+test('Feishu form permits options, freeform only, and rejects empty/forged input without burning the token',async()=>{
+ const f=fixture();try{
+  const request=()=>f.bridge.interactions.request({agent:f.agent,questions:[
+   {id:'x',question:'选什么？',multiSelect:true,options:[{label:'甲'},{label:'乙'}]}
+  ]},()=>assert.fail());
+  const first=request();await f.bridge.idle();
+  let ui=f.questions.at(-1).body.ui;
+  await assert.rejects(f.bridge.answer({...f.origin,token:ui.submitToken,selectedValues:[]}),/answer-required/);
+  await assert.rejects(f.bridge.answer({...f.origin,token:ui.submitToken,selectedValues:['900']}),/invalid-answer/);
+  await assert.rejects(f.bridge.answer({...f.origin,userId:'wrong-owner',token:ui.submitToken,selectedValues:['0']}),/actor-mismatch/);
+  await f.bridge.answer({...f.origin,token:ui.submitToken,selectedValues:['0'],customText:'也要一份补充说明'});
+  assert.deepEqual((await first).answers,[{id:'x',selected:['甲'],custom:'也要一份补充说明'}]);
+  const second=request();await f.bridge.idle();
+  ui=f.questions.at(-1).body.ui;
+  await f.bridge.answer({...f.origin,token:ui.submitToken,selectedValues:[],customText:'选项都不合适，我要另一种'});
+  assert.deepEqual((await second).answers,[{id:'x',selected:[],custom:'选项都不合适，我要另一种'}]);
+  const third=request();await f.bridge.idle();
+  ui=f.questions.at(-1).body.ui;
+  await f.bridge.answer({...f.origin,token:ui.customToken,customText:'Discord 的自定义回答'});
+  assert.deepEqual((await third).answers,[{id:'x',selected:[],custom:'Discord 的自定义回答'}]);
+ }finally{await f.close();}
+});
+
 test('feishu callbacks without thread field need the exact delivered card identity',async()=>{
   const f=fixture();f.store.db.prepare('UPDATE channel_turn_origins SET origin=?').run(JSON.stringify({...f.origin,threadId:'thread-a'}));
   const promise=f.bridge.interactions.request({agent:f.agent,questions:[{id:'q',question:'确认',options:[{label:'是'}]}]},()=>assert.fail());await f.bridge.idle();
@@ -157,16 +197,16 @@ test('removed identity links stop future cross-channel sharing',()=>{
   store.syncAliases('feishu','test',[]);assert.notEqual(store.identity(alias),'shared');store.close();
 });
 test('channel gates and namespaces isolate groups, actors, presets and workspaces',()=>{
-  const config={allowedUsers:['a'],allowGroups:true,allowedGroups:['g'],requireMention:true,workspacePath:'E:/dsh/default-workspace',agentPreset:'agent',memoryNamespace:'private'};
+  const config={allowedUsers:['a'],allowGroups:true,allowedGroups:['g'],requireMention:true,workspacePath:'/virtual/dsh/default-workspace',agentPreset:'agent',memoryNamespace:'private'};
   assert(allowed({userId:'a',kind:'dm'},config));assert(!allowed({userId:'a',kind:'group',conversationId:'g'},config));assert(!allowed({userId:'b',kind:'dm'},config));
   assert(allowed({userId:'a',kind:'thread',conversationId:'g',mentionedBot:true},config));
-  assert.notEqual(channelScope(config).workspaceId,channelScope({...config,workspacePath:'E:/dsh/another'}).workspaceId);
+  assert.notEqual(channelScope(config).workspaceId,channelScope({...config,workspacePath:'/virtual/dsh/another'}).workspaceId);
 });
 test('runtime saves reconnect once, clears old listeners and contains credential errors',async()=>{
   const callbacks=new Set(),events=new Map(),transports=[],registrations=[];
   const config={enabled:true,allowedUsers:['a'],accountId:'test',identityLinks:[],appId:'cli-fixture'};
   const settings={configFile:{value:config,subscribe(fn){callbacks.add(fn);return ()=>callbacks.delete(fn);}}};
-  const ctx={credentials:{async resolve(){return {value:'fixture'};}},channelCore:{resolveWorkspace:async()=> 'E:/dsh/fixture-workspace',store:{syncAliases(){}},bridge:{register(){registrations.push(1);return ()=>{registrations.pop();};}}},on(name,fn){events.set(name,fn);return ()=>events.delete(name);}};
+  const ctx={credentials:{async resolve(){return {value:'fixture'};}},channelCore:{resolveWorkspace:async()=> '/virtual/dsh/fixture-workspace',store:{syncAliases(){}},bridge:{register(){registrations.push(1);return ()=>{registrations.pop();};}}},on(name,fn){events.set(name,fn);return ()=>events.delete(name);}};
   const runtime=new ChannelRuntime(ctx,settings,{provider:'feishu',credentialRefs:()=>['FEISHU_APP_SECRET'],createTransport:async({signal})=>{const item={signal,started:0,closed:0,start(){item.started++;},close(){item.closed++;return Promise.resolve();}};transports.push(item);return item;}});
   await runtime.reconfigure();assert(runtime.details().connected);await runtime.reconfigure();assert.equal(registrations.length,1);assert(transports[0].signal.aborted);
   await runtime.close();assert.equal(registrations.length,0);assert.equal(callbacks.size,0);assert.equal(events.size,0);
@@ -341,6 +381,46 @@ test('Discord coalesces updates to only the latest snapshot while the first edit
  }finally{unblock();await g.off();await f.close();}
 });
 
+
+test('Discord progress after Ask User resumes with only new text, not already quoted history',async()=>{
+ const f=fixture(),snapshots=[],questions=[];
+ const g=discordProgressFixture(f,{
+  progress:async(_origin,body)=>snapshots.push(body),
+  question:async(_origin,body,actions)=>{questions.push({body,actions});return {messageId:'question-card'};},
+  send:async()=>({messageId:'reply'})
+ });
+ try{
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[
+   {type:'text',text:'已经公开的第一段'}, {type:'tool-call',name:'ask_user_question'}
+  ]}}});
+  await flushProgress(f);
+  assert(snapshots.at(-1).activity.timeline.some(item=>item.text==='已经公开的第一段'));
+  const waiting=f.bridge.interactions.request({agent:f.agent,questions:[{id:'q',question:'继续吗？',options:[{label:'继续'}]}]},()=>assert.fail());
+  await f.bridge.idle();
+  assert.equal(questions.at(-1).body.context,'已经公开的第一段');
+  const token=questions.at(-1).actions[0].token;
+  const accepted=await f.bridge.answer({...g.origin,token,messageId:'question-card'});
+  assert.equal(accepted.completed,true);
+  await waiting;
+  const state=f.bridge.state(f.session.id,1);
+  f.bridge.progress(g.origin,state);
+  await flushProgress(f);
+  const resumed=snapshots.at(-1).activity;
+  assert(!resumed.timeline.some(item=>item.text==='已经公开的第一段'));
+  assert.equal(resumed.commentary,'');
+  f.bridge.stream(f.session,{type:'start',turn:1,attemptId:'after-question',revision:0});
+  f.bridge.stream(f.session,{type:'chunk',attemptId:'after-question',revision:0,index:0,chunk:{type:'block-start',index:0,blockType:'text'}});
+  f.bridge.stream(f.session,{type:'chunk',attemptId:'after-question',revision:0,index:1,chunk:{type:'text-delta',index:0,text:'回答后正在写的新内容'}});
+  await flushProgress(f);
+  const current=snapshots.at(-1).activity;
+  assert.equal(current.activeTextDraft,'回答后正在写的新内容');
+  assert(!JSON.stringify(current).includes('已经公开的第一段'));
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[{type:'text',text:'回答后新增的已提交文本'}]}}});
+  await flushProgress(f);
+  assert.deepEqual(snapshots.at(-1).activity.timeline.filter(e=>e.type==='public-draft').map(e=>e.text),['回答后新增的已提交文本']);
+ }finally{await g.off();await f.close();}
+});
+
 test('Discord final skips pending snapshots after a blocked in-flight progress edit',async()=>{
  const f=fixture(),calls=[];
  let unblock;
@@ -420,6 +500,39 @@ test('overlapping streaming reasoning, block-end and committed native reasoning 
    await f.bridge.idle();
    assert.equal(f.sent.at(-1).body.text,'最终结论');
    assert.deepEqual(f.sent.at(-1).body.drafts,['先核对工具，再查结果','最后整理论据'],'no repeated stream or commit blocks and chronological order preserved');
+ }finally{await f.close();}
+});
+
+
+test('Feishu resume after Ask User shows only fresh progress, keeps original context for final',async()=>{
+ const f=fixture();try{
+  f.bridge.adapters.get(JSON.stringify(['feishu','test'])).adapter.showPublicDrafts=true;
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[
+   {type:'text',text:'提问前已经展示的完整分析'}, {type:'tool-call',name:'ask_user_question'}
+  ]}}});
+  await flushProgress(f);
+  assert(f.progress.at(-1).body.activity.timeline.some(e=>e.text==='提问前已经展示的完整分析'));
+  const waiting=f.bridge.interactions.request({agent:f.agent,questions:[{id:'q',question:'下一步？',options:[{label:'继续'}]}]},()=>assert.fail());
+  await f.bridge.idle();
+  assert.equal(f.questions.at(-1).body.context,'提问前已经展示的完整分析');
+  const token=f.questions.at(-1).actions[0].token;
+  const accepted=await f.bridge.answer({...f.origin,token,messageId:'question-a'});
+  assert.equal(accepted.completed,true);
+  await waiting;
+  f.bridge.progress(f.origin,f.bridge.state(f.session.id,1));
+  await flushProgress(f);
+  const immediatelyAfter=f.progress.at(-1).body.activity;
+  assert(!immediatelyAfter.timeline.some(e=>e.text==='提问前已经展示的完整分析'));
+  assert.equal(immediatelyAfter.commentary,'');
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[{type:'text',text:'回答之后新增内容'}]}}});
+  await flushProgress(f);
+  const newTimeline=f.progress.at(-1).body.activity.timeline;
+  assert.deepEqual(newTimeline.filter(e=>e.type==='public-draft').map(e=>e.text),['回答之后新增内容']);
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[{type:'text',text:'最终正式答复'}]}}});
+  f.bridge.event(f.session,{type:'turn/end',data:{turn:1,reason:{kind:'completed'}}});
+  await f.bridge.idle();
+  assert.equal(f.sent.at(-1).body.text,'最终正式答复');
+  assert.deepEqual(f.sent.at(-1).body.publicDrafts,['回答之后新增内容'],'final retained process card must not replay prior Ask User context');
  }finally{await f.close();}
 });
 

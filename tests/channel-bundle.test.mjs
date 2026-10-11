@@ -75,7 +75,7 @@ test('Discord and Feishu align functional groups and keep infrequent settings in
  const shared=['enabled','credentialSecret','allowedUsers','allowGroups','allowedGroups','requireMention','rolePreset','inputMode','streaming.mode','streaming.progress.toolProgress','streaming.progress.commentary','streaming.progress.toolDetail','streaming.progress.narration','throttleMs','streaming.progress.maxLines','streaming.progress.maxLineChars','ownerMode','ownerUserId','ownerStatus','memoryNamespace','identityLinks','attachments','maxAttachmentMB'];
  for(const provider of ['discord','feishu']){
   const fields=pages[provider].fields,byKey=new Map(fields.map(field=>[field.key,field]));
-  assert.equal(fields.length,provider==='discord'?40:38,'all config fields remain available');
+  assert.equal(fields.length,provider==='discord'?40:39,'all config fields remain available');
   if(provider==='discord'){
     assert(!byKey.has('streaming.style'),'removed message style must not be configurable');
     assert.equal(byKey.get('displayIcon').group,'回复与显示');
@@ -107,6 +107,9 @@ test('Discord and Feishu align functional groups and keep infrequent settings in
       assert.equal(field.group,'回复与显示');
       assert.equal(field.fold,'更多显示设置');
     }
+    assert.equal(byKey.get('streaming.progress.draft').label,'显示草稿');
+    assert.equal(byKey.get('streaming.progress.draft').type,'boolean');
+    assert.deepEqual(byKey.get('streaming.progress.draft').when,{'streaming.mode':'progress'});
     assert.equal(byKey.get('streaming.progress.maxLines').label,'最多显示进度条目');
     assert.equal(byKey.get('throttleMs').label,'进度卡片刷新间隔（毫秒）');
     assert.equal(byKey.get('streaming.cardEngine').label,'飞书卡片引擎');

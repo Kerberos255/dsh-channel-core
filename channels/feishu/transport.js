@@ -2,6 +2,7 @@ import { checkAbort, boundedBytes, statusLabel } from 'dsh-channel-core/transpor
 import { renderProgressLines } from 'dsh-channel-core/progress-lines';
 import { renderFooter } from '../discord/footer.js';
 import { createCardKitChannel, streamingCard } from './cardkit.js';
+import { completedAskUserText } from '../../lib/answered-question.js';
 
 export function normalize(message,config){
   return {provider:'feishu',accountId:config.accountId,conversationId:message.chatId,userId:message.senderId,messageId:message.messageId,
@@ -50,7 +51,7 @@ const safeAgent=value=>{
   const clean=String(value??'').replace(/[\r\n\x00-\x1f\x7f]/g,'').trim().slice(0,48);
   return clean||'Agent';
 };
-const title=body=>safeAgent(body.agentName)+' · '+(body.processSnapshot?'过程记录':statusLabel(body.status))+(body.partCount>1?' · '+body.partIndex+'/'+body.partCount:'');
+const title=body=>safeAgent(body.agentName)+' · '+(body.processSnapshot?'阶段记录':statusLabel(body.status))+(body.partCount>1?' · '+body.partIndex+'/'+body.partCount:'');
 const wrapCard=(body,elements)=>({
   schema:'2.0',config:{wide_screen_mode:true,update_multi:true},
   header:{title:{tag:'plain_text',content:title(body)},template:body.status==='failed'?'red':body.final&&!body.processSnapshot?'green':'blue'},
@@ -68,8 +69,27 @@ export function card(body,actions=[],options){
   // Never use body.text as a progress fallback: it can contain a transient draft.
   const fallback=isProgress?(statusLabel(body.status)||'正在处理…'):(body.text||statusLabel(body.status));
   const content=String(lines.length?formatProgressRows(lines):fallback).slice(0,7500);
+  if(body.processSnapshot)return draftCard({...body,text:'',drafts:[],publicDrafts:[content]});
   const elements=[{tag:'markdown',content},
-    ...actions.map(action=>({tag:'button',text:{tag:'plain_text',content:action.label.slice(0,80)},type:'default',value:{dsh:action.token}}))];
+    ...actions.map(action=>({tag:'button',text:{tag:'plain_text',content:action.label.slice(0,80)},type:'default',behaviors:[{type:'callback',value:{dsh:action.token}}]}))];
+  // Historical process snapshots must never inherit Ask User controls.
+  if(body.ui&&!body.processSnapshot){
+    const ui=body.ui;
+    const fields=[];
+    if(ui.multi&&ui.options.length)fields.push({
+      tag:'multi_select_static',name:'ask_choices',required:false,
+      placeholder:{tag:'plain_text',content:'请选择一项或多项'},
+      options:ui.options.map(option=>({text:{tag:'plain_text',content:option.label.slice(0,80)},value:option.value}))
+    });
+    fields.push({tag:'input',name:'ask_custom',input_type:'multiline_text',required:!ui.multi,
+      label:{tag:'plain_text',content:ui.multi?'补充说明或其他回答（可选）':'其他回答'},
+      placeholder:{tag:'plain_text',content:'选项都不合适？直接在这里输入'},
+      max_length:1000});
+    fields.push({tag:'button',name:'ask_submit',type:'primary',form_action_type:'submit',
+      text:{tag:'plain_text',content:ui.multi?'确认选择':'提交自定义回答'},
+      behaviors:[{type:'callback',value:{dsh:ui.multi?ui.submitToken:ui.customToken}}]});
+    elements.push({tag:'form',name:'ask_form',elements:fields});
+  }
   if(body.footerText)elements.push({tag:'markdown',content:body.footerText,text_size:'notation'});
   return wrapCard(body,elements);
 }
@@ -103,7 +123,7 @@ export function draftCard(body){
   const content=(visible.truncated||body.draftsTruncated?'…（较早过程已省略）\n':'')+visible.text;
   return wrapCard({...body,partCount:undefined},[{
     tag:'collapsible_panel',expanded:false,
-    header:{title:{tag:'plain_text',content:'📝 过程记录'},vertical_align:'center',
+    header:{title:{tag:'plain_text',content:'📝 阶段记录'},vertical_align:'center',
       icon:{tag:'standard_icon',token:'down-small-ccm_outlined',size:'16px 16px'},icon_position:'right',icon_expanded_angle:-180},
     border:{color:'grey',corner_radius:'5px'},vertical_spacing:'8px',padding:'8px 8px 8px 8px',
     elements:[{tag:'markdown',content,text_size:'notation'}],
@@ -130,7 +150,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
     ...Object.fromEntries(['get','delete','head','options'].map(method=>[method,(url,options)=>sdk.defaultHttpInstance[method](url,{...options,timeout:15000,signal})])),
     ...Object.fromEntries(['post','put','patch'].map(method=>[method,(url,data,options)=>sdk.defaultHttpInstance[method](url,data,{...options,timeout:15000,signal})])),
   }:undefined;
-  const channel=sdk.createLarkChannel({appId:config.appId,appSecret:credentials[0],domain:config.domain==='lark'?sdk.Domain.Lark:sdk.Domain.Feishu,source:'dsh-channel-feishu',logger:silent,handshakeTimeoutMs:15000,
+  const channel=sdk.createLarkChannel({appId:config.appId,appSecret:credentials[0],domain:config.domain==='lark'?sdk.Domain.Lark:sdk.Domain.Feishu,source:'dsh-channel-feishu',logger:silent,includeRawEvent:true,handshakeTimeoutMs:15000,
     ...(http?{httpInstance:http}:{}),
     policy:{dmMode:config.ownerMode==='first-dm'||config.ownerMode==='manual'?'all':'allowlist',dmAllowlist:config.allowedUsers,groupAllowlist:config.allowGroups?config.allowedGroups:[],requireMention:config.requireMention,respondToMentionAll:false},
     safety:{chatQueue:{enabled:false},batch:{text:{delayMs:0,longDelayMs:0},media:{delayMs:0}},staleMessageWindowMs:300000},outbound:{streamThrottleMs:config.throttleMs,textChunkLimit:6000,retry:{maxAttempts:1}}});
@@ -151,6 +171,46 @@ export async function createTransport({config,credentials,signal,receive,state,a
     return {...body,agentName:role||'Agent',footerText};
   }
   const progress=new Map(),presented=new Map(),kitRecords=new Map(),questionCards=new Map(),questionContexts=new Map(),disposers=[];
+  // A completed Ask User button belongs to one specific bot-owned card.
+  // Recall it only after the bridge has authenticated and accepted the answer.
+  // If Feishu disallows recall (permission/retention policy), remove buttons
+  // with a non-interactive card update instead of pretending it disappeared.
+  async function retireQuestionCard(messageId,conversationId,answered){
+    if(!messageId||!conversationId)return;
+    const match=[...questionCards.entries()].find(([id,record])=>{
+      try{return JSON.parse(id)[0]===conversationId&&record.messageId===messageId;}
+      catch{return false;}
+    });
+    if(!match)return;
+    const [id,record]=match;
+    try{
+      const previous=JSON.parse(record.signature);
+      const questionText=String(previous.body?.elements?.find(element=>element.tag==='markdown')?.content??'')
+        .split(/\n\n文字(?:备用|回答)：\/answer /u)[0]
+        .replace(/\n选好后点击“确认选择”。/gu,'');
+      const title=String(previous.header?.title?.content??'Agent · 等待回答');
+      const agentName=title.replace(/ · 等待回答$/u,'');
+      const response=Array.isArray(answered)&&answered.length?completedAskUserText(answered):questionText+'\n\n✅ 已回答';
+      const finished=card({agentName,status:'completed',text:response,final:true},[],config.streaming);
+      finished.header.title.content=safeAgent(agentName)+' · 已回答';
+      if(!withinBudget(finished))throw new Error('feishu-answer-card-too-large');
+      await channel.updateCard(record.messageId,finished);
+      questionCards.delete(id);
+    }catch(error){
+      state('已收到回答，但问题卡更新失败：'+(error?.code??'api-error'),false);
+    }
+  }
+  const originalAction=action;
+  action=async request=>{
+    const outcome=await originalAction(request);
+    if(outcome?.accepted&&outcome.completed){
+      // A successful selection must ACK without waiting for remote card recall.
+      void retireQuestionCard(request.messageId,request.conversationId,outcome.answered)
+        .catch(error=>state('飞书问题卡清理失败：'+(error?.code??'unknown'),false));
+    }
+    return outcome;
+  };
+
   let kitApi=null; // resolve lazily: rawClient can appear after channel.connect()
   let kitDisabled=false;
   const key=origin=>JSON.stringify([origin.conversationId,origin.threadId??'',origin.messageId]);
@@ -158,11 +218,33 @@ export async function createTransport({config,credentials,signal,receive,state,a
   disposers.push(channel.on('message',async message=>{
     if(signal.aborted)return;
     const origin=normalize(message,config);
-    try{await receive(origin);}catch(error){state('消息处理失败：'+(error.code??'请查看 DSH 日志'));await present(origin,{text:'消息未被接收，请查看渠道设置与 DSH 日志。',status:'failed',final:true}).catch(()=>{});progress.delete(key(origin));presented.delete(key(origin));}
+    try{await receive(origin);}
+    catch(error){
+      state('消息处理失败：'+(error?.code??'请查看 DSH 日志'));
+      await present(origin,{text:'消息未被接收，请查看渠道设置与 DSH 日志。',status:'failed',final:true}).catch(()=>{});
+      progress.delete(key(origin));presented.delete(key(origin));
+    }
   }));
   disposers.push(channel.on('cardAction',async event=>{
-    const token=event.action?.value?.dsh;
-    if(!signal.aborted&&typeof token==='string')try{await action({token,userId:event.operator.openId,conversationId:event.chatId,threadId:event.threadId,messageId:event.messageId,values:event.action.option?[event.action.option]:undefined});}catch{return {toast:{type:'error',content:'该操作已失效，或当前账号无权回答。'}};}
+    const token=event?.action?.value?.dsh;
+    if(signal.aborted)return {toast:{type:'error',content:'渠道正在重连，请稍后重试。'}};
+    if(typeof token!=='string'||!token)return {toast:{type:'error',content:'按钮缺少有效操作信息，请重新发起提问。'}};
+    try{
+      // The channel SDK exposes form_value only on the opted-in raw event.
+      // Do not log raw payloads: they may contain freeform user answers.
+      const form=event.raw?.action?.form_value??event.action?.form_value;
+      const selectedValues=form?.ask_choices;
+      const customText=form?.ask_custom;
+      const outcome=await action({token,userId:event.operator?.openId,conversationId:event.chatId,
+        threadId:event.threadId,messageId:event.messageId,
+        ...(Array.isArray(selectedValues)?{selectedValues}:{}),
+        ...(typeof customText==='string'?{customText}:{}),
+        values:event.action?.option?[event.action.option]:undefined});
+      return {toast:{type:'success',content:outcome?.completed?'已收到回答':'已记录选择'}};
+    }catch(error){
+      state('飞书按钮回答未被接受：'+(error?.code??'unknown'),false);
+      return {toast:{type:'error',content:'回答未提交，请重新选择或用文字回答。'}};
+    }
   }));
   disposers.push(channel.on('error',error=>state('渠道错误：'+error.code)));
   disposers.push(channel.on('reconnecting',()=>state('渠道正在重连…',false)));
@@ -260,7 +342,9 @@ export async function createTransport({config,credentials,signal,receive,state,a
         catch(error){state('飞书最终答复已发送，但折叠思考卡更新失败：'+(error?.code??'unknown'));}
       }
       progress.delete(key(origin));presented.delete(key(origin));kitRecords.delete(key(origin));
-      questionCards.delete(key(origin));questionContexts.delete(key(origin));
+      const pendingQuestion=questionCards.get(key(origin));
+      if(pendingQuestion)await retireQuestionCard(pendingQuestion.messageId,origin.conversationId);
+      questionContexts.delete(key(origin));
       return result;
     },
     async question(origin,body,actions){
@@ -272,7 +356,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
       // card. CardKit streaming has to be closed before the old card is frozen.
       if(hasProgress){
         if(added){
-          const formatted=await presentation({...body,status:'generating',final:true,processSnapshot:true});
+          const formatted=await presentation({...body,ui:undefined,status:'generating',final:true,processSnapshot:true});
           const parts=splitFeishuMarkdown(added,6000);
           const payload=card({...formatted,text:parts[0],partIndex:1,partCount:parts.length},[],config.streaming);
           const saved=await presentPayload(origin,payload,{recreateMissing:false});
@@ -288,7 +372,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
         }
         progress.delete(id);presented.delete(id);kitRecords.delete(id);
       }else if(added){
-        const formatted=await presentation({...body,status:'generating',final:true,processSnapshot:true});
+        const formatted=await presentation({...body,ui:undefined,status:'generating',final:true,processSnapshot:true});
         const parts=splitFeishuMarkdown(added,6000);
         for(let i=0;i<parts.length;i++){
           const payload=card({...formatted,text:parts[i],partIndex:i+1,partCount:parts.length},[],config.streaming);

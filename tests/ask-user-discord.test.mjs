@@ -50,7 +50,7 @@ test('Ask User after two public drafts never publishes synthetic draft labels',a
   assert([...f.visible.values()][0].includes('📝 第二段'));
   assert(![...f.visible.values()][0].includes('草稿 · '));
   await t.question(f.origin,{status:'waiting-user',context:prefix,text:'继续吗？'},[]);
-  const quoted='**📝 过程草稿**\n\n> 第一段\n> \n> 第二段';
+  const quoted='> 第一段\n> \n> 第二段';
   assert([...f.visible.values()].includes(quoted),'committed prose becomes a native Discord blockquote');
   await t.send(f.origin,{status:'completed',text:prefix+'\n\n最终正文'});
   assert.deepEqual([...f.visible.values()].filter(text=>!text.includes('继续吗？')),[quoted,'最终正文']);
@@ -65,7 +65,7 @@ test('Ask User history is published once, then final only displays the continuat
   await t.question(f.origin,{status:'waiting-user',context:'A',text:'1/1 · 继续吗？'},[]);
   await t.send(f.origin,{status:'completed',text:'A\n\nB'});
   const displayed=[...f.visible.values()];
-  assert.deepEqual(displayed,['**📝 过程草稿**\n\n> A','B']);
+  assert.deepEqual(displayed,['> A','B']);
   assert.equal(f.sent.length,2,'no third copy of A');
  }finally{await t.close();}
 });
@@ -76,7 +76,7 @@ test('two Ask User pauses incrementally publish each committed section once',asy
   await t.question(f.origin,{status:'waiting-user',context:'A',text:'第一问'},[]);
   await t.question(f.origin,{status:'waiting-user',context:'A\n\nB',text:'第二问'},[]);
   await t.send(f.origin,{status:'completed',text:'A\n\nB\n\nC'});
-  assert.deepEqual([...f.visible.values()],['**📝 过程草稿**\n\n> A','**📝 过程草稿**\n\n> B','C']);
+  assert.deepEqual([...f.visible.values()],['> A','> B','C']);
  }finally{await t.close();}
 });
 
@@ -88,8 +88,8 @@ test('Ask User quoted history and later committed draft are each shown once',asy
   await t.send(f.origin,{status:'completed',text:'A\n\nB\n\nC',draftPrelude:'A\n\nB',finalReplyText:'C'});
   const visible=[...f.visible.values()];
   assert.deepEqual(visible,[
-   '**📝 过程草稿**\n\n> A',
-   '**📝 过程草稿**\n\n> B\n\n**✅ 正式回复**\n\nC'
+   '> A',
+   '> B\n\n**✅ 正式回复**\n\nC'
   ]);
  }finally{await t.close();}
 });

@@ -3,6 +3,7 @@ import { renderProgress,renderNotice,renderHeading,footerSuffix } from './progre
 import { renderFooter } from './footer.js';
 import { afterPresentedContext } from './question-context.js';
 import { formatAskUserDraft,formatFinalWithQuotedDraft } from './final-format.js';
+import { completedAskUserText } from '../../lib/answered-question.js';
 import { currentSelection, decodeModel, defaultEffort, describeSelection, effortChoices, modelChoices } from './model-commands.js';
 
 // Discord 的"正在输入"提示约 10 秒后自动消失，所以按心跳刷新；上限是保险丝，
@@ -36,7 +37,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
   const sdk=sdkOverride??await import('discord.js');
   const client=new sdk.Client({intents:[sdk.GatewayIntentBits.Guilds,sdk.GatewayIntentBits.GuildMessages,sdk.GatewayIntentBits.DirectMessages,sdk.GatewayIntentBits.MessageContent],partials:[sdk.Partials.Channel],
     rest:{timeout:15000,retries:0},makeCache:sdk.Options.cacheWithLimits({MessageManager:0,ThreadManager:100,GuildMemberManager:0,PresenceManager:0})});
-  const progress=new Map(),presented=new Map(),interactions=new Map(),questionContexts=new Map(),questions=new Map(),progressIdentities=new Map(),listeners=[];
+  const progress=new Map(),presented=new Map(),interactions=new Map(),questionContexts=new Map(),questions=new Map(),questionMessages=new Map(),modalRequests=new Map(),progressIdentities=new Map(),listeners=[];
   const key=origin=>JSON.stringify([origin.conversationId,origin.threadId??'',origin.messageId]);
   const on=(name,handler)=>{client.on(name,handler);listeners.push(()=>client.off(name,handler));};
   on('messageCreate',async message=>{
@@ -96,11 +97,63 @@ export async function createTransport({config,credentials,signal,receive,state,a
         if(result?.ignored||command==='answer')await interaction.editReply({content:result?.ignored?'当前账号或频道未被允许使用。':'回答已提交。',allowedMentions:{parse:[]}});
         return;
       }
-      if(!interaction.isMessageComponent?.()||!interaction.customId.startsWith('dsh:'))return;
+      if(interaction.isModalSubmit?.()&&interaction.customId?.startsWith('dsh-modal:')){
+        const token=interaction.customId.slice('dsh-modal:'.length),source=modalRequests.get(token);
+        const thread=interaction.channel?.isThread?.()?interaction.channelId:undefined;
+        const conversationId=thread?interaction.channel.parentId:interaction.channelId;
+        if(!source||source.userId!==interaction.user.id||source.conversationId!==conversationId||(source.threadId??'')!==(thread??'')){
+          await interaction.reply({content:'该输入窗口已失效，请重新打开问题卡。',flags:64});return;
+        }
+        await interaction.deferReply({flags:64});
+        const customText=interaction.fields.getTextInputValue('answer');
+        const outcome=await action({token,userId:interaction.user.id,conversationId,threadId:thread,
+          messageId:source.messageId,customText});
+        if(outcome?.accepted&&outcome.completed){
+          modalRequests.delete(token);
+          await retireAnsweredQuestion({message:{id:source.messageId},channelId:thread??conversationId,
+            channel:{parentId:conversationId,isThread:()=>!!thread}},outcome);
+        }
+        await interaction.editReply({content:'回答已提交。',allowedMentions:{parse:[]}});return;
+      }
+      if(!interaction.isMessageComponent?.()||!interaction.customId?.startsWith('dsh'))return;
+      if(interaction.customId.startsWith('dsh-custom:')){
+        const token=interaction.customId.slice('dsh-custom:'.length);
+        const messageId=interaction.message?.id;
+        const question=questionMessages.get(messageId);
+        const thread=interaction.channel?.isThread?.()?interaction.channelId:undefined;
+        const conversationId=thread?interaction.channel.parentId:interaction.channelId;
+        if(!question||question.conversationId!==conversationId||question.threadId!==(thread??'')){
+          await interaction.reply({content:'这张问题卡已失效，请重新发起 Ask User。',flags:64,allowedMentions:{parse:[]}});return;
+        }
+        // Current Discord modal schema uses a Label (type 18) wrapping the
+        // Text Input; the legacy Action Row (type 1) is deprecated.
+        const modal={title:'自定义回答',custom_id:'dsh-modal:'+token,components:[{
+          type:18,label:'请输入你希望的回答',component:{
+            type:4,custom_id:'answer',style:2,min_length:1,max_length:2000,required:true
+          }
+        }]};
+        const entry={userId:interaction.user.id,conversationId,threadId:thread,messageId};
+        modalRequests.set(token,entry);
+        if(modalRequests.size>100)modalRequests.delete(modalRequests.keys().next().value);
+        try{await interaction.showModal(modal);}
+        catch(error){if(modalRequests.get(token)===entry)modalRequests.delete(token);throw error;}
+        return;
+      }
+      if(!interaction.customId.startsWith('dsh:'))return;
       await interaction.deferUpdate();
-      await action({token:interaction.customId.slice(4),userId:interaction.user.id,conversationId:interaction.channel?.isThread?.()?interaction.channel.parentId:interaction.channelId,threadId:interaction.channel?.isThread?.()?interaction.channelId:undefined,messageId:interaction.message.id,values:interaction.values});
-    }catch{
-      const body={content:'该操作已失效，或当前账号与频道无权执行。',flags:64,allowedMentions:{parse:[]}};
+      const outcome=await action({token:interaction.customId.slice(4),userId:interaction.user.id,
+        conversationId:interaction.channel?.isThread?.()?interaction.channel.parentId:interaction.channelId,
+        threadId:interaction.channel?.isThread?.()?interaction.channelId:undefined,
+        messageId:interaction.message.id,values:interaction.values});
+      if(outcome?.accepted&&outcome.completed)await retireAnsweredQuestion(interaction,outcome);
+      // Select interactions are acknowledged by deferUpdate() above. They
+      // update only server-side pending selection, never create a new message.
+    }catch(error){
+      // Never record submitted answers, interaction tokens or user identifiers.
+      // Keep a safe Discord error code so modal API rejections are diagnosable.
+      const reason=String(error?.code??error?.status??error?.name??'unknown').slice(0,64);
+      state('Discord 交互处理失败：'+reason,false);
+      const body={content:'操作未完成（'+reason+'），请重新尝试。',flags:64,allowedMentions:{parse:[]}};
       if(interaction.deferred||interaction.replied)await interaction.followUp(body).catch(()=>{});else await interaction.reply(body).catch(()=>{});
     }
   });
@@ -134,6 +187,29 @@ export async function createTransport({config,credentials,signal,receive,state,a
     entry.timer=setInterval(()=>{void ping();},TYPING_REFRESH_MS);
     entry.timer.unref?.();
   }
+  // Both Discord and Feishu preserve the original question and the validated
+  // submitted answer; no removal and no interactive controls after completion.
+  async function retireAnsweredQuestion(interaction,outcome){
+    const messageId=interaction.message?.id,entry=questionMessages.get(messageId);
+    if(!entry)return;
+    const conversationId=interaction.channel?.isThread?.()?interaction.channel.parentId:interaction.channelId;
+    const threadId=interaction.channel?.isThread?.()?interaction.channelId:'';
+    if(entry.conversationId!==conversationId||entry.threadId!==threadId)return;
+    if(progress.get(entry.key)!==messageId||presented.get(entry.key)!==entry.signature)return;
+    // Detach synchronously. Otherwise the resumed agent may overwrite this
+    // question card with a later progress update while the IM edit is pending.
+    progress.delete(entry.key);presented.delete(entry.key);
+    questions.delete(entry.key);questionMessages.delete(messageId);
+    try{
+      const channel=await channelFor({conversationId:entry.conversationId,threadId:entry.threadId||undefined});
+      await channel.messages.edit(messageId,{
+        content:completedAskUserText(outcome?.answered,1800),
+        components:[],allowedMentions:{parse:[]}
+      });
+    }catch(error){
+      state('Discord 已收到回答，但完成卡片更新失败：'+(error?.code??'unknown'),false);
+    }
+  }
   const options=(content,origin,body)=>({content,allowedMentions:{parse:[],repliedUser:false},...(origin.messageId&&!origin.messageId.startsWith('interaction:')?{reply:{messageReference:origin.messageId,failIfNotExists:false}}:{}),...(body.id?{nonce:body.id.slice(0,24),enforceNonce:true}:{})});
   const runtimeMetrics=new Map();
   async function readRuntimeMetrics(sessionId,force=false){
@@ -151,10 +227,26 @@ export async function createTransport({config,credentials,signal,receive,state,a
     return previous?.value??{};
   }
   const displayIdentity=metrics=>({icon:config.displayIcon,name:metrics?.agentName||host?.defaultAgentName?.()||'Agent'});
-  async function present(origin,body,actions=[],content=renderNotice(body,displayIdentity())){
+  async function present(origin,body,actions=[],content=renderNotice(body,displayIdentity()),interactive=false){
     const id=key(origin),existing=progress.get(id);
     const components=[];
-    for(let i=0;i<Math.min(actions.length,25);i+=5)components.push({type:1,components:actions.slice(i,i+5).map(item=>({type:2,style:2,label:item.label.slice(0,80),custom_id:'dsh:'+item.token}))});
+    if(interactive&&body.ui?.multi){
+      const ui=body.ui;
+      if(ui.options.length)components.push({type:1,components:[{
+        type:3,custom_id:'dsh:'+ui.selectToken,placeholder:'选择一项或多项',
+        min_values:0,max_values:ui.options.length,
+        options:ui.options.map(option=>({label:option.label.slice(0,100),value:option.value}))
+      }]});
+      components.push({type:1,components:[
+        {type:2,style:1,label:'确认选择',custom_id:'dsh:'+ui.submitToken},
+        {type:2,style:2,label:'✍️ 自定义回答',custom_id:'dsh-custom:'+ui.customToken}
+      ]});
+    }else if(interactive){
+      for(let i=0;i<Math.min(actions.length,25);i+=5)
+        components.push({type:1,components:actions.slice(i,i+5).map(item=>({
+          type:2,style:2,label:item.label.slice(0,80),custom_id:(item.custom?'dsh-custom:':'dsh:')+item.token
+        }))});
+    }
     const signature=JSON.stringify([content,components]);
     if(existing&&presented.get(id)===signature)return {messageId:existing};
     const channel=await channelFor(origin);
@@ -166,6 +258,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
   function preserve(origin){
     // The current Discord message becomes history; subsequent progress needs a
     // new message, including when the first one was a slash-command response.
+    const old=progress.get(key(origin));if(old)questionMessages.delete(old);
     progress.delete(key(origin));presented.delete(key(origin));interactions.delete(origin.messageId);
   }
   async function question(origin,body,actions){
@@ -187,9 +280,11 @@ export async function createTransport({config,credentials,signal,receive,state,a
         checkAbort(signal);await present(origin,body,[],part);preserve(origin);
       }
     }
-    const sent=await present(origin,body,actions,parts.at(-1));questions.set(id,text);return sent;
+    const sent=await present(origin,body,actions,parts.at(-1),true);questions.set(id,text);
+    if(actions.length||body.ui?.multi)questionMessages.set(sent.messageId,{key:id,conversationId:origin.conversationId,threadId:origin.threadId??'',signature:presented.get(id)});
+    return sent;
   }
-  let closing;const close=()=>closing??=(async()=>{signal.removeEventListener('abort',onAbort);listeners.splice(0).forEach(dispose=>dispose());await client.destroy();typing.forEach(entry=>{if(entry.timer)clearInterval(entry.timer);});typing.clear();progress.clear();presented.clear();interactions.clear();questionContexts.clear();questions.clear();progressIdentities.clear();})();
+  let closing;const close=()=>closing??=(async()=>{signal.removeEventListener('abort',onAbort);listeners.splice(0).forEach(dispose=>dispose());await client.destroy();typing.forEach(entry=>{if(entry.timer)clearInterval(entry.timer);});typing.clear();progress.clear();presented.clear();interactions.clear();questionContexts.clear();questions.clear();questionMessages.clear();modalRequests.clear();progressIdentities.clear();})();
   const onAbort=()=>{void close().catch(()=>{});};signal.addEventListener('abort',onAbort,{once:true});
   return {
     throttleMs:config.throttleMs,
@@ -243,6 +338,8 @@ export async function createTransport({config,credentials,signal,receive,state,a
         try{await channel.messages.delete(oldProgress);progress.delete(oldKey);presented.delete(oldKey);}
         catch(error){state('Discord 已发出最终回复，但旧进度消息清理失败：'+(error.code??'unknown'));}
       }
+      if(existing)questionMessages.delete(existing);
+      if(oldProgress)questionMessages.delete(oldProgress);
       progress.delete(key(origin));presented.delete(key(origin));interactions.delete(origin.messageId);questionContexts.delete(key(origin));questions.delete(key(origin));progressIdentities.delete(key(origin));
       if(oldKey)progressIdentities.delete(oldKey);
       if(oldContextKey&&oldContextKey!==key(origin)){questionContexts.delete(oldContextKey);questions.delete(oldContextKey);}

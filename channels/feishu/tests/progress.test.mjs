@@ -14,11 +14,11 @@ function fixture(streaming={mode:'progress'},behavior={}){
  const channel={
   on(name,fn){listeners.set(name,fn);return()=>listeners.delete(name);},
   async send(chatId,body,options){calls.push({type:'send',chatId,body,options});return {messageId:'card-'+calls.filter(c=>c.type==='send').length};},
-  async updateCard(id,payload){calls.push({type:'update',id,payload});if(behavior.failUpdate){const error=new Error('mock-patch');error.status=behavior.failUpdate;throw error;}},
+  async updateCard(id,payload){calls.push({type:'update',id,payload});if(behavior.updateGate)await behavior.updateGate();if(behavior.failUpdate){const error=new Error('mock-patch');error.status=behavior.failUpdate;throw error;}},
   async connect(){},async disconnect(){},rawClient:behavior.rawClient
  };
  const sdk={createLarkChannel:()=>channel,Domain:{Lark:'lark',Feishu:'feishu'}};
- const create=()=>createTransport({config:schema.validate({streaming,...(behavior.config??{})}),credentials:['fixture'],signal:new AbortController().signal,receive:async()=>{},state:()=>{},action:async()=>{},host:behavior.host},sdk);
+ const create=()=>createTransport({config:schema.validate({streaming,...(behavior.config??{})}),credentials:['fixture'],signal:new AbortController().signal,receive:async()=>{},state:()=>{},action:behavior.action??(async()=>{}),host:behavior.host},sdk);
  return {calls,listeners,create,behavior};
 }
 const activity={tools:[{name:'read_file',status:'running',detail:'DESIGN.md'},{name:'pwsh',status:'completed',detail:'npm pack'}],commentary:'检查脚本',narration:'内部推理\n最后思考'};
@@ -58,11 +58,13 @@ test('progress edits one card and skips identical payload; final replaces progre
   await t.progress(origin,{...body,activity:{...activity,tools:[{name:'read',status:'completed',detail:'notes.md'}]}});
   assert.equal(f.calls.filter(x=>x.type==='update').length,1);
   await t.question(origin,{status:'waiting-user',text:'请确认'},[{label:'允许',token:'fixture-token'}]);
-  assert.equal(f.calls.at(-1).body.card.body.elements[1].value.dsh,'fixture-token');
+  assert.equal(f.calls.at(-1).body.card.body.elements[1].behaviors[0].value.dsh,'fixture-token');
   assert.equal(f.calls.filter(x=>x.type==='send').length,2,'question uses its own card');
   await t.send(origin,{status:'completed',final:true,text:'已完成'});
-  assert.equal(f.calls.at(-1).body.card.body.elements.length,1);
-  assert.equal(f.calls.at(-1).body.card.body.elements[0].content,'已完成');
+  const answer=f.calls.filter(c=>c.type==='send').at(-1).body.card;
+  assert.equal(answer.body.elements.length,1);
+  assert.equal(answer.body.elements[0].content,'已完成');
+  assert.equal(f.calls.at(-1).type,'update','fallback retires the answered question card');
   await t.progress({...origin,messageId:'next'},{status:'thinking',text:'PRIVATE-DRAFT'});
   assert.equal(f.calls.filter(x=>x.type==='send').length,4);
  }finally{await t.close();}
@@ -194,7 +196,7 @@ test('final reasoning card keeps chronological independent thoughts but omits re
  const content=folded.body.elements[0].elements[0].content;
  assert(content.indexOf('第一段：')<content.indexOf('第二段：'),'preserve original reasoning sequence');
  assert(!content.includes(repeated),'do not duplicate final answer');
- assert.equal(folded.body.elements[0].header.title.content,'📝 过程记录');
+ assert.equal(folded.body.elements[0].header.title.content,'📝 阶段记录');
  assert.equal(distinctReasoning([repeated],answer).length,0);
 });
 
@@ -380,7 +382,7 @@ test('CardKit question closes streaming mode, keeps buttons and can start a new 
   await t.progress(origin,{status:'thinking',activity:{timeline:[]}});
   await t.question(origin,{status:'waiting-user',text:'继续？'},[{label:'允许',token:'test-button'}]);
   const payload=f.calls.filter(c=>c.type==='send').at(-1).body.card;
-  assert.equal(payload.body.elements[1].value.dsh,'test-button');
+  assert.equal(payload.body.elements[1].behaviors[0].value.dsh,'test-button');
   assert.equal(kit.calls.at(-1).type,'kit-settings');
   assert.equal(kit.calls.filter(c=>c.type==='kit-settings').length,1);
   // A new stream uses a fresh CardKit card; the button card remains interactive.
@@ -436,7 +438,8 @@ test('CardKit absence auto-degrades without breaking final reply or Ask User',as
   await t.question(origin,{status:'waiting-user',text:'继续吗？'},[{label:'继续',token:'yes'}]);
   await t.send(origin,{status:'completed',text:'安全送达'});
   assert.equal(f.calls.filter(c=>c.type==='send').length,3);
-  assert.equal(f.calls.at(-1).body.card.body.elements[0].content,'安全送达');
+  assert.equal(f.calls.filter(c=>c.type==='send').at(-1).body.card.body.elements[0].content,'安全送达');
+  assert.equal(f.calls.at(-1).payload.body.elements[0].content,'继续吗？\n\n✅ 已回答');
  }finally{await t.close()}
 });
 
@@ -490,7 +493,7 @@ test('Feishu preserves recent long drafts, constrains tools independently and re
  assert.equal(thoughtContent,'💭 第一段\n\n第二段\n\n💭 接着第三段');
  assert(!thoughtContent.includes('**思考 1**'));
  assert(!thoughtContent.includes('思考 2'));
- assert.equal(thoughts.body.elements[0].header.title.content,'📝 过程记录');
+ assert.equal(thoughts.body.elements[0].header.title.content,'📝 阶段记录');
 });
 
 test('Feishu draft and thinking switches are independent in progress and final cards',async()=>{
@@ -514,7 +517,7 @@ test('Feishu draft and thinking switches are independent in progress and final c
   await t.progress(dm,preview);
   await t.send(dm,{status:'completed',text:'正式答复',publicDrafts:['已公开的阶段性草稿']});
   const retained=f.calls.filter(c=>c.type==='update').at(-1).payload;
-  assert.equal(retained.body.elements[0].header.title.content,'📝 过程记录');
+  assert.equal(retained.body.elements[0].header.title.content,'📝 阶段记录');
   const content=retained.body.elements[0].elements[0].content;
   assert(content.includes('📝 已公开的阶段性草稿'));
   assert(!content.includes('仅主人能看到的推理'));
@@ -529,16 +532,19 @@ test('Feishu Ask User preserves committed context and creates an independent int
   await t.progress(dm,{status:'generating',activity:{timeline:[{type:'public-draft',text:'分析完成，等待确认。'}]}});
   await t.question(dm,{status:'waiting-user',text:'请选择下一步',context:'分析完成，等待确认。'},[{label:'继续',token:'token1'}]);
   assert.deepEqual(f.calls.map(c=>c.type),['send','update','send']);
-  assert.equal(f.calls[1].payload.header.title.content,'Agent · 过程记录');
-  assert.equal(f.calls[1].payload.body.elements[0].content,'分析完成，等待确认。');
+  assert.equal(f.calls[1].payload.header.title.content,'Agent · 阶段记录');
+  assert.equal(f.calls[1].payload.body.elements[0].tag,'collapsible_panel');
+   assert.equal(f.calls[1].payload.body.elements[0].expanded,false);
+   assert.equal(f.calls[1].payload.body.elements[0].elements[0].content,'📝 分析完成，等待确认。');
   assert.equal(f.calls[2].body.card.body.elements[0].content,'请选择下一步');
-  assert.equal(f.calls[2].body.card.body.elements[1].value.dsh,'token1');
+  assert.equal(f.calls[2].body.card.body.elements[1].behaviors[0].value.dsh,'token1');
   await t.question(dm,{status:'waiting-user',text:'请选择其他项',context:'分析完成，等待确认。'},[{label:'更改',token:'token2'}]);
   assert.equal(f.calls.at(-1).type,'update','same question card is updated for multiple answers');
   assert.equal(f.calls.at(-1).id,'card-2');
   await t.send(dm,{status:'completed',text:'最终答复',publicDrafts:['分析完成，等待确认。']});
-  assert.equal(f.calls.at(-1).type,'send','final must not overwrite the committed context');
-  assert.equal(f.calls.at(-1).body.card.body.elements[0].content,'最终答复');
+  assert.equal(f.calls.filter(c=>c.type==='send').at(-1).body.card.body.elements[0].content,'最终答复');
+  assert.equal(f.calls.at(-1).id,'card-2','obsolete question card is disabled, not left clickable');
+  assert.equal(f.calls.at(-1).payload.body.elements[0].content,'请选择其他项\n\n✅ 已回答');
   assert.equal(f.calls.filter(c=>c.type==='send').length,3);
  }finally{await t.close();}
 });
@@ -553,6 +559,209 @@ test('Feishu Ask User freezes CardKit progress and keeps visible transient draft
   assert.equal(f.calls[0].body.card.body.elements[0].content,'确认吗？');
   await t.progress(origin,{status:'generating',activity:{timeline:[{type:'public-draft',text:'问题解决后继续'}]}});
   assert.equal(kit.calls.filter(c=>c.type==='kit-create').length,2,'continued progress cannot overwrite frozen draft');
+ }finally{await t.close();}
+});
+
+
+
+test('Feishu callback ACK is prompt even if the completed-card edit is pending',async()=>{
+ let release;
+ const gate=new Promise(resolve=>{release=resolve});
+ const f=fixture({mode:'progress',cardEngine:'patch'},{
+  updateGate:()=>gate,action:async()=>({accepted:true,completed:true})
+ });
+ const t=await f.create();
+ try{
+  await t.question(origin,{status:'waiting-user',text:'继续？'},[{label:'继续',token:'choice'}]);
+  const button=f.calls[0].body.card.body.elements[1];
+  assert.equal(button.behaviors[0].type,'callback');
+  assert.equal(button.behaviors[0].value.dsh,'choice');
+  const result=await f.listeners.get('cardAction')({action:{value:{dsh:'choice'}},operator:{openId:origin.userId},chatId:origin.conversationId,messageId:'card-1'});
+  assert.deepEqual(result,{toast:{type:'success',content:'已收到回答'}});
+  assert.equal(f.calls.at(-1).type,'update','editing started independently of ACK');
+  assert.equal(f.calls.at(-1).id,'card-1');
+  release();
+  await Promise.resolve();
+ }finally{release();await t.close();}
+});
+
+test('Feishu card callback reports invalid and rejected answers instead of silent no-op',async()=>{
+ let called=0;
+ const f=fixture({mode:'progress',cardEngine:'patch'},{action:async()=>{called++;throw Object.assign(new Error('invalid'),{code:'stale-interaction'});}});
+ const t=await f.create();
+ try{
+  const callback=f.listeners.get('cardAction');
+  const bad=await callback({action:{value:{}},operator:{openId:origin.userId},chatId:origin.conversationId,messageId:'card-1'});
+  assert.equal(bad.toast.type,'error');
+  assert.equal(called,0,'no bridge calls without a valid token');
+  const denied=await callback({action:{value:{dsh:'choice'}},operator:{openId:origin.userId},chatId:origin.conversationId,messageId:'card-1'});
+  assert.equal(denied.toast.type,'error');
+  assert.equal(called,1);
+ }finally{await t.close();}
+});
+
+test('Feishu Ask User retains only text in process snapshot, never duplicate interactive form',async()=>{
+ const recalls=[];
+ const rawClient={im:{v1:{message:{delete:async req=>{recalls.push(req.path.message_id);return {code:0};}}}}};
+ const f=fixture({mode:'progress',cardEngine:'patch'},{rawClient,action:async()=>({accepted:true,completed:true})});
+ const t=await f.create();
+ const ui={multi:true,options:[{label:'方案一',value:'0'},{label:'方案二',value:'1'}],submitToken:'confirm-token',customToken:'other-token'};
+ try{
+  await t.progress(origin,{status:'generating',activity:{timeline:[{type:'public-draft',text:'此前已经公开的文字'}]}});
+  await t.question(origin,{status:'waiting-user',text:'请选择方案',context:'此前已经公开的文字',ui},[]);
+  assert.deepEqual(f.calls.map(x=>x.type),['send','update','send']);
+  const snapshot=f.calls[1].payload;
+  assert.equal(snapshot.header.title.content,'Agent · 阶段记录');
+  assert.equal(snapshot.body.elements.length,1,'frozen context must not inherit Ask User form');
+  assert.equal(snapshot.body.elements[0].tag,'collapsible_panel');
+   assert.equal(snapshot.body.elements[0].expanded,false);
+   assert.equal(snapshot.body.elements[0].elements[0].content,'📝 此前已经公开的文字');
+  const interactive=f.calls[2].body.card;
+  assert.equal(interactive.header.title.content,'Agent · 等待回答');
+  assert.equal(interactive.body.elements.filter(x=>x.tag==='form').length,1,'only live question owns the form');
+  const response=await f.listeners.get('cardAction')({
+    action:{value:{dsh:'confirm-token'}},raw:{action:{form_value:{ask_choices:['0'],ask_custom:''}}},
+    operator:{openId:origin.userId},chatId:origin.conversationId,messageId:'card-2'
+  });
+  assert.equal(response.toast.type,'success');
+  assert.deepEqual(recalls,[],'completed questions must never be withdrawn');
+  const completed=f.calls.at(-1);
+  assert.equal(completed.type,'update');
+  assert.equal(completed.id,'card-2');
+  assert.equal(completed.payload.header.title.content,'Agent · 已回答');
+  assert.equal(completed.payload.body.elements[0].content,'请选择方案\n\n✅ 已回答');
+  assert.equal(completed.payload.body.elements.length,1,'all interactive controls removed');
+  assert.equal(f.calls[1].payload.body.elements.some(x=>x.tag==='form'),false);
+ }finally{await t.close();}
+});
+
+test('Feishu Ask User without a progress card also publishes noninteractive history',async()=>{
+ const f=fixture({mode:'progress',cardEngine:'patch'}),t=await f.create();
+ const ui={multi:true,options:[{label:'甲',value:'0'}],submitToken:'confirm-token',customToken:'other-token'};
+ try{
+  await t.question(origin,{status:'waiting-user',text:'请选择',context:'历史文字',ui},[]);
+  const sent=f.calls.filter(c=>c.type==='send').map(x=>x.body.card);
+  assert.equal(sent.length,2);
+  assert.equal(sent[0].header.title.content,'Agent · 阶段记录');
+  assert.equal(sent[0].body.elements.length,1);
+  assert.equal(sent[0].body.elements[0].tag,'collapsible_panel');
+   assert.equal(sent[0].body.elements[0].expanded,false);
+   assert.equal(sent[0].body.elements[0].elements[0].content,'📝 历史文字');
+  assert.equal(sent[1].body.elements.some(x=>x.tag==='form'),true);
+  const defensive=card({status:'generating',text:'已提交的历史文字',processSnapshot:true,ui},[]);
+  assert.equal(defensive.body.elements.length,1,'even a mistaken caller cannot embed form in snapshot');
+ }finally{await t.close();}
+});
+
+test('Feishu native form stores multi-choice and custom answer locally until one submit',async()=>{
+ const ui={multi:true,options:[{label:'甲',value:'0'},{label:'乙',value:'1'}],submitToken:'submit-choice',customToken:'custom-choice'};
+ const rendered=card({status:'waiting-user',text:'选哪些？',ui},[]);
+ const form=rendered.body.elements.find(e=>e.tag==='form');
+ assert.equal(form?.name,'ask_form');
+ assert.equal(form.elements[0].tag,'multi_select_static');
+ assert.deepEqual(form.elements[0].options.map(o=>o.value),['0','1']);
+ assert.equal(form.elements[1].tag,'input');
+ assert.equal(form.elements[1].name,'ask_custom');
+ assert.equal(form.elements[2].form_action_type,'submit');
+ assert.equal(form.elements[2].behaviors[0].value.dsh,'submit-choice');
+ assert.equal(rendered.body.elements.filter(e=>e.tag==='button').length,0,'selecting must not publish individual button callbacks');
+ let delivered;
+ const options={action:async value=>{delivered=value;return {accepted:true,completed:false};}};
+ const f=fixture({mode:'progress'},options),t=await f.create();
+ try{
+  await t.question(origin,{status:'waiting-user',text:'选哪些？',ui},[]);
+  const reply=await f.listeners.get('cardAction')({
+    action:{value:{dsh:'submit-choice'}},
+    raw:{action:{form_value:{ask_choices:['0','1'],ask_custom:'还有额外要求'}}},
+    operator:{openId:origin.userId},chatId:origin.conversationId,messageId:'card-1'
+  });
+  assert.deepEqual(delivered.selectedValues,['0','1']);
+  assert.equal(delivered.customText,'还有额外要求');
+  assert.equal(reply.toast.type,'success');
+ }finally{await t.close();}
+});
+test('Feishu native single-choice also has a custom answer form',()=>{
+ const rendered=card({status:'waiting-user',text:'下一步？',ui:{multi:false,options:[],customToken:'custom-1'}},
+    [{label:'甲',token:'option-1'}]);
+ const options=rendered.body.elements;
+ assert.equal(options[1].tag,'button');
+ assert.equal(options[1].behaviors[0].value.dsh,'option-1');
+ const form=options.find(x=>x.tag==='form');
+ assert.equal(form.elements[0].required,true);
+ assert.equal(form.elements[1].behaviors[0].value.dsh,'custom-1');
+});
+
+test('Feishu updates only the completed question and never withdraws it',async()=>{
+ const withdrawn=[],sdkClient={im:{v1:{message:{delete:async req=>{withdrawn.push(req.path.message_id);return {code:0};}}}}};
+ let completed=false;
+ const f=fixture({mode:'progress',cardEngine:'patch'},{rawClient:sdkClient,action:async()=>({accepted:true,completed})});
+ const t=await f.create();
+ try{
+  await t.question(origin,{status:'waiting-user',text:'继续吗？'},[{label:'继续',token:'choice'}]);
+  const respond=f.listeners.get('cardAction');
+  const callback=messageId=>({action:{value:{dsh:'choice'}},operator:{openId:origin.userId},chatId:origin.conversationId,messageId});
+  await respond(callback('card-1'));
+  assert.equal(f.calls.filter(c=>c.type==='update').length,0,'an intermediate answer keeps its buttons');
+  completed=true;
+  await respond(callback('other-card'));
+  assert.equal(f.calls.filter(c=>c.type==='update').length,0,'an unrelated message is never edited');
+  await respond(callback('card-1'));
+  const edits=f.calls.filter(c=>c.type==='update');
+  assert.equal(edits.length,1);
+  assert.equal(edits[0].id,'card-1');
+  assert.equal(edits[0].payload.header.title.content,'Agent · 已回答');
+  assert.equal(edits[0].payload.body.elements[0].content,'继续吗？\n\n✅ 已回答');
+  assert.equal(edits[0].payload.body.elements.length,1,'all original buttons are gone');
+  await respond(callback('card-1'));
+  assert.equal(f.calls.filter(c=>c.type==='update').length,1,'repeat callbacks cannot rewrite completed card');
+  assert.deepEqual(withdrawn,[]);
+ }finally{await t.close();}
+});
+test('Feishu completed card preserves question text, removes actions and keeps the message',async()=>{
+ const f=fixture({mode:'progress',cardEngine:'patch'},{action:async()=>({accepted:true,completed:true})});
+ const t=await f.create();
+ try{
+  await t.question(origin,{status:'waiting-user',text:'确认？\n\n文字备用：/answer local-token 自定义回答'},[{label:'确认',token:'choice'}]);
+  await f.listeners.get('cardAction')({action:{value:{dsh:'choice'}},operator:{openId:origin.userId},chatId:origin.conversationId,messageId:'card-1'});
+  const changed=f.calls.at(-1);
+  assert.equal(changed.type,'update');
+  assert.equal(changed.id,'card-1');
+  assert.equal(changed.payload.header.title.content,'Agent · 已回答');
+  assert.equal(changed.payload.body.elements.length,1);
+  assert.equal(changed.payload.body.elements[0].content,'确认？\n\n✅ 已回答');
+  assert(!JSON.stringify(changed.payload).includes('local-token'),'the completed card exposes no old answer token');
+ }finally{await t.close();}
+ const failed=fixture({mode:'progress',cardEngine:'patch'},{failUpdate:500,action:async()=>({accepted:true,completed:true})});
+ const q=await failed.create();
+ try{
+  await q.question(origin,{status:'waiting-user',text:'另一条问题'},[{label:'提交',token:'choice'}]);
+  const reply=await failed.listeners.get('cardAction')({action:{value:{dsh:'choice'}},operator:{openId:origin.userId},chatId:origin.conversationId,messageId:'card-1'});
+  assert.equal(reply.toast.type,'success','accepted answer is independent from card UI edit');
+  assert.equal(failed.calls.at(-1).type,'update','edit was attempted');
+  assert.equal(failed.calls.filter(c=>c.type==='send').length,1,'no second question and no withdrawn placeholder');
+ }finally{await q.close();}
+});
+test('Feishu Ask User retains the validated question and selected response in place',async()=>{
+ const f=fixture({mode:'progress',cardEngine:'patch'},{
+  action:async()=>({accepted:true,completed:true,answered:[{question:'今天处理哪些任务？',selected:['同步公开版','检查部署'],custom:'先不要重启'}]})
+ }),t=await f.create();
+ try{
+  const ui={multi:true,options:[{label:'同步公开版',value:'0'},{label:'检查部署',value:'1'}],
+   submitToken:'submit-answer',customToken:'custom-answer'};
+  await t.question(origin,{status:'waiting-user',text:'请选任务',ui},[]);
+  const result=await f.listeners.get('cardAction')({
+   action:{value:{dsh:'submit-answer'}},raw:{action:{form_value:{ask_choices:['0','1'],ask_custom:'先不要重启'}}},
+   operator:{openId:origin.userId},chatId:origin.conversationId,messageId:'card-1'
+  });
+  assert.equal(result.toast.type,'success');
+  const edited=f.calls.filter(item=>item.type==='update').at(-1);
+  assert.equal(edited.id,'card-1');
+  assert.equal(edited.payload.header.title.content,'Agent · 已回答');
+  const text=edited.payload.body.elements[0].content;
+  assert(text.includes('问题：今天处理哪些任务？'));
+  assert(text.includes('已选：同步公开版、检查部署'));
+  assert(text.includes('补充回答：先不要重启'));
+  assert.equal(edited.payload.body.elements.length,1,'form and submit buttons removed');
  }finally{await t.close();}
 });
 
