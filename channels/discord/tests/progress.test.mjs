@@ -109,7 +109,7 @@ test('Discord safely fits a long draft/thought timeline into one message without
  assert(rendered.length<=1900,rendered.length);
  assert(rendered.startsWith('**🐋 小虎鲸 · '));
  assert(rendered.includes('README.md'),'newest tool entry must not be lost');
- assert(rendered.includes('📝 草稿 · '));
+ assert(rendered.includes('📝 '));
  assert(rendered.includes('💭 '));
  assert(rendered.endsWith('-# '+footer),'footer must remain complete');
  assert(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(rendered));
@@ -153,8 +153,8 @@ test('Discord progress uses readable paragraphs and grouped tools while keeping 
  ]};
  const result=renderProgress({status:'thinking',activity},settings,'模型名 · 上下文 32k tokens',{name:'小虎鲸'});
  assert(result.startsWith('**🐋 小虎鲸 · 正在思考**\n\n'));
- assert(result.includes('💭 先分析问题。\n\n再确定方案。\n\n📝 草稿 · 段落一的文字\n\n段落二的文字'));
- assert(result.includes('📝 草稿 · 段落一的文字\n\n段落二的文字\n\n✅ 读取文件 · A.md'));
+ assert(result.includes('💭 先分析问题。\n\n再确定方案。\n\n📝 段落一的文字\n\n段落二的文字'));
+ assert(result.includes('📝 段落一的文字\n\n段落二的文字\n\n✅ 读取文件 · A.md'));
  assert(result.includes('✅ 读取文件 · A.md\n⏳ 执行命令 · npm test\n✅ 查找文件 · src/*.js'));
  assert(result.endsWith('\n\n-# 模型名 · 上下文 32k tokens'));
  assert(result.length<1900);
@@ -170,7 +170,7 @@ test('Discord preserves paragraph layout, last tool and footer under dense Unico
  assert(result.length<=1900,result.length);
  assert(result.includes('file-9'),'retain latest tool summary');
  assert(result.includes('最新内容11'),'retain most recent draft');
- assert(result.includes('\n\n📝 草稿 · '),'show a visible break before draft');
+ assert(result.includes('\n\n📝 '),'show a visible break before draft');
  assert(result.endsWith('-# '+footer));
  assert(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(result));
 });

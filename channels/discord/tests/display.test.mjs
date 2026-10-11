@@ -55,8 +55,9 @@ test('plain progress shows model, context, drafts and tools; final becomes only 
    ],activeTextDraft:'根据测试调整逻辑'}});
    const first=f.calls.find(x=>x.kind==='send').body;
    assert.equal(first.embeds,undefined);
-   assert(first.content.includes('草稿 · 我先看项目'));
-   assert(first.content.includes('草稿 · 根据测试调整逻辑'));
+   assert(first.content.includes('📝 我先看项目'));
+   assert(!first.content.includes('草稿 · '));
+   assert(first.content.includes('📝 根据测试调整逻辑'));
    assert(first.content.includes('npm test'));
    assert(first.content.includes('上下文 12k tokens'));
    assert(first.content.includes('deepseek/deepseek-v4'));
@@ -223,8 +224,10 @@ test('Ask User already published context is not re-quoted or repeated in Discord
   await t.question(origin,{status:'waiting-user',text:'请确认',context:'已发布的阶段内容'},[{label:'确认',token:'test-option'}]);
   await t.send(origin,{status:'completed',text:'已发布的阶段内容\n\n最终答案',
     draftPrelude:'已发布的阶段内容',finalReplyText:'最终答案'});
+  const quoted=f.calls.filter(call=>call.kind==='edit').find(call=>call.body.content.includes('> 已发布的阶段内容'))?.body.content;
+  assert(quoted?.startsWith('**📝 过程草稿**\n\n> '),'Ask User drafts are quoted before the question');
   const final=f.calls.filter(call=>call.kind==='edit').at(-1).body.content;
   assert(final.startsWith('最终答案'));
-  assert(!final.includes('过程草稿'));
+  assert(!final.includes('过程草稿'),'final continuation must not duplicate published draft');
  }finally{await t.close();}
 });

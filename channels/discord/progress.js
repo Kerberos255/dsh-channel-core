@@ -22,11 +22,11 @@ export function footerSuffix(footer){
 // Fit the complete rolling window into one Discord message. Short tool rows
 // keep their budget; the remaining space is shared fairly among draft/thought
 // rows, avoiding the old whole-message truncation that hid newest events.
-const isNarrative=row=>row.startsWith('💭 ')||row.startsWith('📝 草稿 · ');
+const isNarrative=row=>row.startsWith('💭 ')||row.startsWith('📝 ');
 const shorten=(row,max)=>{
   if(row.length<=max)return row;
   if(isNarrative(row)){
-    const marker=row.startsWith('💭 ')?'💭 ':'📝 草稿 · ';
+    const marker=row.startsWith('💭 ')?'💭 ':'📝 ';
     let from=row.length-Math.max(1,max-marker.length-1);
     if(/[\uDC00-\uDFFF]/.test(row[from]??''))from++;
     return marker+'…'+row.slice(from);

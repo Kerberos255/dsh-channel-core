@@ -1,7 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatFinalWithQuotedDraft,quotePublicDraft } from '../final-format.js';
+import { formatAskUserDraft,formatFinalWithQuotedDraft,quotePublicDraft } from '../final-format.js';
 
+
+test('Ask User committed prelude uses the same Discord quote style without repeating final text',()=>{
+ assert.deepEqual(formatAskUserDraft(''),[]);
+ assert.deepEqual(formatAskUserDraft('第一段\n\n第二段'),[
+  '**📝 过程草稿**\n\n> 第一段\n> \n> 第二段'
+ ]);
+ const long='长内容\n'.repeat(900)+'最后一段';
+ const chunks=formatAskUserDraft(long);
+ assert(chunks.length>1,'long drafts must be split');
+ assert(chunks.every(chunk=>chunk.length<=1900),'quote markers must fit Discord limits');
+ assert(chunks[0].startsWith('**📝 过程草稿**\n\n> '));
+ assert(chunks.slice(1).every(chunk=>chunk.startsWith('> ')));
+ assert(chunks.at(-1).includes('最后一段'));
+});
 test('quote wrapper keeps every original paragraph inside the left-bar quote',()=>{
  assert.equal(quotePublicDraft('段落一\n\n段落二\r\n- 清单'),'> 段落一\n> \n> 段落二\n> - 清单');
  const parts=formatFinalWithQuotedDraft('检查配置\n\n第二段\n\n**结果**\n\n完成',{

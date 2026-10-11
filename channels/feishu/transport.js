@@ -50,10 +50,10 @@ const safeAgent=value=>{
   const clean=String(value??'').replace(/[\r\n\x00-\x1f\x7f]/g,'').trim().slice(0,48);
   return clean||'Agent';
 };
-const title=body=>safeAgent(body.agentName)+' · '+statusLabel(body.status)+(body.partCount>1?' · '+body.partIndex+'/'+body.partCount:'');
+const title=body=>safeAgent(body.agentName)+' · '+(body.processSnapshot?'过程记录':statusLabel(body.status))+(body.partCount>1?' · '+body.partIndex+'/'+body.partCount:'');
 const wrapCard=(body,elements)=>({
   schema:'2.0',config:{wide_screen_mode:true,update_multi:true},
-  header:{title:{tag:'plain_text',content:title(body)},template:body.status==='failed'?'red':body.final?'green':'blue'},
+  header:{title:{tag:'plain_text',content:title(body)},template:body.status==='failed'?'red':body.final&&!body.processSnapshot?'green':'blue'},
   body:{elements},
 });
 
@@ -82,25 +82,31 @@ export function distinctReasoning(drafts,answer=''){
   for(let i=0;i+3<=reference.length;i++)grams.add(reference.slice(i,i+3));
   return (drafts??[]).map(raw=>String(raw??'').split(/\n\s*\n/).filter(paragraph=>{
     const line=normalize(paragraph);
-    if(line.length<16||!reference)return true;
-    if(reference.includes(line))return false;
+    if(!reference)return true;
+    if(line&&reference.includes(line))return false;
+    if(line.length<16)return true;
     if(line.length<36)return true;
     let matched=0,total=0;
     for(let i=0;i+3<=line.length;i++){total++;if(grams.has(line.slice(i,i+3)))matched++;}
     return !total||matched/total<0.88;
   }).join('\n\n').trim()).filter(Boolean);
 }
+export function processEntries(body){
+  const thoughts=distinctReasoning(body.drafts,body.text).map(text=>'💭 '+text);
+  const publicDrafts=distinctReasoning(body.publicDrafts,body.text).map(text=>'📝 '+text);
+  return [...thoughts,...publicDrafts];
+}
 export function draftCard(body){
-  const separate=distinctReasoning(body.drafts,body.text);
-  const raw=separate.join('\n\n');
+  const entries=processEntries(body);
+  const raw=entries.join('\n\n');
   const visible=tailWithinBytes(raw,7000);
-  const reasoning=(visible.truncated||body.draftsTruncated?'…（较早思考已省略）\n':'')+visible.text;
+  const content=(visible.truncated||body.draftsTruncated?'…（较早过程已省略）\n':'')+visible.text;
   return wrapCard({...body,partCount:undefined},[{
     tag:'collapsible_panel',expanded:false,
-    header:{title:{tag:'plain_text',content:'💭 思考'},vertical_align:'center',
+    header:{title:{tag:'plain_text',content:'📝 过程记录'},vertical_align:'center',
       icon:{tag:'standard_icon',token:'down-small-ccm_outlined',size:'16px 16px'},icon_position:'right',icon_expanded_angle:-180},
     border:{color:'grey',corner_radius:'5px'},vertical_spacing:'8px',padding:'8px 8px 8px 8px',
-    elements:[{tag:'markdown',content:reasoning,text_size:'notation'}],
+    elements:[{tag:'markdown',content,text_size:'notation'}],
   }]);
 }
 const withinBudget=payload=>byteLength(JSON.stringify(payload))<=CARD_JSON_BYTES;
@@ -144,7 +150,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
     const footerText=renderFooter(config.streaming.footer,body,metrics);
     return {...body,agentName:role||'Agent',footerText};
   }
-  const progress=new Map(),presented=new Map(),kitRecords=new Map(),disposers=[];
+  const progress=new Map(),presented=new Map(),kitRecords=new Map(),questionCards=new Map(),questionContexts=new Map(),disposers=[];
   let kitApi=null; // resolve lazily: rawClient can appear after channel.connect()
   let kitDisabled=false;
   const key=origin=>JSON.stringify([origin.conversationId,origin.threadId??'',origin.messageId]);
@@ -219,11 +225,12 @@ export async function createTransport({config,credentials,signal,receive,state,a
     return sent;
   }
   const present=async(origin,body,actions=[],options)=>presentPayload(origin,card(await presentation(body),actions,options),{streaming:(options?.mode==='progress'||options?.mode==='partial')&&!actions.length&&body.final!==true});
-  let closing;const close=()=>closing??=(async()=>{signal.removeEventListener('abort',onAbort);disposers.splice(0).forEach(dispose=>dispose());await channel.disconnect();progress.clear();presented.clear();kitRecords.clear();})();
+  let closing;const close=()=>closing??=(async()=>{signal.removeEventListener('abort',onAbort);disposers.splice(0).forEach(dispose=>dispose());await channel.disconnect();progress.clear();presented.clear();kitRecords.clear();questionCards.clear();questionContexts.clear();})();
   const onAbort=()=>{void close().catch(()=>{});};signal.addEventListener('abort',onAbort,{once:true});
   return {
     throttleMs:config.throttleMs,
     showNarration:config.streaming.mode==='progress'&&config.streaming.progress.narration,
+    showPublicDrafts:config.streaming.mode==='progress'&&config.streaming.progress.draft,
     start:()=>channel.connect(),
     details:()=>({feishuCardEngine:kitRecords.size?'CardKit':kitDisabled?'兼容模式（CardKit 不可用）':config.streaming.cardEngine==='patch'?'兼容模式':'CardKit 待首次流式创建'}),
     close,
@@ -231,7 +238,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
     async send(origin,body){
       const finished=await presentation({...body,final:true},true);
       const hasDrafts=origin.kind==='dm'&&config.streaming.mode==='progress'
-        &&config.streaming.progress.narration&&progress.has(key(origin))&&Array.isArray(body.drafts)&&distinctReasoning(body.drafts,body.text).length>0;
+        &&!questionCards.has(key(origin))&&progress.has(key(origin))&&processEntries(finished).length>0;
       // Only retain a collapsed reasoning card if content remains after answer overlap removal.
       // The final answer is never placed inside that same card.
       // Prepare and validate all answer cards before mutating the progress card.
@@ -253,13 +260,60 @@ export async function createTransport({config,credentials,signal,receive,state,a
         catch(error){state('飞书最终答复已发送，但折叠思考卡更新失败：'+(error?.code??'unknown'));}
       }
       progress.delete(key(origin));presented.delete(key(origin));kitRecords.delete(key(origin));
+      questionCards.delete(key(origin));questionContexts.delete(key(origin));
       return result;
     },
     async question(origin,body,actions){
-      const wasKit=kitRecords.has(key(origin));
-      const answer=await present(origin,body,actions);
-      if(wasKit){progress.delete(key(origin));presented.delete(key(origin));}
-      return answer;
+      const id=key(origin),context=String(body.context??''),previous=questionContexts.get(id)??'';
+      const added=context.startsWith(previous)?context.slice(previous.length).trimStart():context;
+      const hasProgress=progress.has(id);
+      // An Ask User card must never replace the visible public text/draft
+      // progress card. Freeze the original first, then send a separate button
+      // card. CardKit streaming has to be closed before the old card is frozen.
+      if(hasProgress){
+        if(added){
+          const formatted=await presentation({...body,status:'generating',final:true,processSnapshot:true});
+          const parts=splitFeishuMarkdown(added,6000);
+          const payload=card({...formatted,text:parts[0],partIndex:1,partCount:parts.length},[],config.streaming);
+          const saved=await presentPayload(origin,payload,{recreateMissing:false});
+          if(!saved.messageId)await channel.send(origin.conversationId,{card:payload},sendOptions(origin));
+          for(let i=1;i<parts.length;i++){
+            const extra=card({...formatted,text:parts[i],partIndex:i+1,partCount:parts.length},[],config.streaming);
+            if(!withinBudget(extra))throw new Error('feishu-card-payload-too-large');
+            await channel.send(origin.conversationId,{card:extra},sendOptions(origin));
+          }
+        }else{
+          const record=kitRecords.get(id);
+          if(record)await kitApi.close(record);
+        }
+        progress.delete(id);presented.delete(id);kitRecords.delete(id);
+      }else if(added){
+        const formatted=await presentation({...body,status:'generating',final:true,processSnapshot:true});
+        const parts=splitFeishuMarkdown(added,6000);
+        for(let i=0;i<parts.length;i++){
+          const payload=card({...formatted,text:parts[i],partIndex:i+1,partCount:parts.length},[],config.streaming);
+          if(!withinBudget(payload))throw new Error('feishu-card-payload-too-large');
+          await channel.send(origin.conversationId,{card:payload},sendOptions(origin));
+        }
+      }
+      questionContexts.set(id,context);
+      const payload=card(await presentation(body),actions);
+      if(!withinBudget(payload))throw new Error('feishu-card-payload-too-large');
+      const signature=JSON.stringify(payload),prior=questionCards.get(id);
+      if(prior?.signature===signature)return {messageId:prior.messageId};
+      if(prior){
+        try{
+          await channel.updateCard(prior.messageId,payload);
+          questionCards.set(id,{messageId:prior.messageId,signature});
+          return {messageId:prior.messageId};
+        }catch(error){
+          if(error?.status!==404&&error?.statusCode!==404)throw error;
+          questionCards.delete(id);
+        }
+      }
+      const sent=await channel.send(origin.conversationId,{card:payload},sendOptions(origin));
+      questionCards.set(id,{messageId:sent.messageId,signature});
+      return sent;
     },
     async upload(message,sessionId,fileUploads,uploadSignal){
       if(!config.attachments)throw Object.assign(new Error('attachments-disabled'),{code:'attachments-disabled'});

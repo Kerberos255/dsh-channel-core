@@ -27,6 +27,9 @@ test('schema migrates booleans, validates nested keys and defaults',()=>{
  assert.equal(schema.validate({streaming:true}).streaming.mode,'progress');
  assert.equal(schema.validate({streaming:false}).streaming.mode,'off');
  assert.equal(schema.defaults.streaming.progress.narration,false);
+ assert.equal(schema.defaults.streaming.progress.draft,true);
+ assert.equal(schema.validate({streaming:{progress:{narration:false,draft:true}}}).streaming.progress.draft,true);
+ assert.throws(()=>schema.validate({streaming:{progress:{draft:'yes'}}}));
  assert.equal(schema.validate({streaming:{mode:'progress',progress:{maxLines:2}}}).streaming.progress.maxLines,2);
  for(const streaming of [null,[],{mode:'oops'},{progress:{narration:'yes'}},{progress:{maxLines:0}},{progress:{maxLineChars:301}},{other:true}])
   assert.throws(()=>schema.validate({streaming}),e=>e.code==='invalid-config');
@@ -55,12 +58,13 @@ test('progress edits one card and skips identical payload; final replaces progre
   await t.progress(origin,{...body,activity:{...activity,tools:[{name:'read',status:'completed',detail:'notes.md'}]}});
   assert.equal(f.calls.filter(x=>x.type==='update').length,1);
   await t.question(origin,{status:'waiting-user',text:'请确认'},[{label:'允许',token:'fixture-token'}]);
-  assert.equal(f.calls.at(-1).payload.body.elements[1].value.dsh,'fixture-token');
+  assert.equal(f.calls.at(-1).body.card.body.elements[1].value.dsh,'fixture-token');
+  assert.equal(f.calls.filter(x=>x.type==='send').length,2,'question uses its own card');
   await t.send(origin,{status:'completed',final:true,text:'已完成'});
-  assert.equal(f.calls.at(-1).payload.body.elements.length,1);
-  assert.equal(f.calls.at(-1).payload.body.elements[0].content,'已完成');
+  assert.equal(f.calls.at(-1).body.card.body.elements.length,1);
+  assert.equal(f.calls.at(-1).body.card.body.elements[0].content,'已完成');
   await t.progress({...origin,messageId:'next'},{status:'thinking',text:'PRIVATE-DRAFT'});
-  assert.equal(f.calls.filter(x=>x.type==='send').length,2);
+  assert.equal(f.calls.filter(x=>x.type==='send').length,4);
  }finally{await t.close();}
 });
 
@@ -175,7 +179,7 @@ test('Feishu final text splits Unicode and escaped content by actual serialized 
  assert.equal(cards.map(x=>x.body.elements[0].content).join(''),source);
  const veryLongDraft=draftCard({status:'completed',final:true,drafts:['较早草稿'.repeat(3000),'最新草稿']});
  assert(Buffer.byteLength(JSON.stringify(veryLongDraft),'utf8')<=24000);
- assert(veryLongDraft.body.elements[0].elements[0].content.includes('较早思考已省略'));
+ assert(veryLongDraft.body.elements[0].elements[0].content.includes('较早过程已省略'));
  assert(veryLongDraft.body.elements[0].elements[0].content.includes('最新草稿'));
 });
 
@@ -190,7 +194,7 @@ test('final reasoning card keeps chronological independent thoughts but omits re
  const content=folded.body.elements[0].elements[0].content;
  assert(content.indexOf('第一段：')<content.indexOf('第二段：'),'preserve original reasoning sequence');
  assert(!content.includes(repeated),'do not duplicate final answer');
- assert.equal(folded.body.elements[0].header.title.content,'💭 思考');
+ assert.equal(folded.body.elements[0].header.title.content,'📝 过程记录');
  assert.equal(distinctReasoning([repeated],answer).length,0);
 });
 
@@ -375,8 +379,9 @@ test('CardKit question closes streaming mode, keeps buttons and can start a new 
  try{
   await t.progress(origin,{status:'thinking',activity:{timeline:[]}});
   await t.question(origin,{status:'waiting-user',text:'继续？'},[{label:'允许',token:'test-button'}]);
-  const payload=JSON.parse(kit.calls.at(-1).request.data.card.data);
+  const payload=f.calls.filter(c=>c.type==='send').at(-1).body.card;
   assert.equal(payload.body.elements[1].value.dsh,'test-button');
+  assert.equal(kit.calls.at(-1).type,'kit-settings');
   assert.equal(kit.calls.filter(c=>c.type==='kit-settings').length,1);
   // A new stream uses a fresh CardKit card; the button card remains interactive.
   await t.progress(origin,{status:'thinking',activity:{timeline:[]}});
@@ -430,8 +435,8 @@ test('CardKit absence auto-degrades without breaking final reply or Ask User',as
   assert.match(t.details().feishuCardEngine,/兼容模式/);
   await t.question(origin,{status:'waiting-user',text:'继续吗？'},[{label:'继续',token:'yes'}]);
   await t.send(origin,{status:'completed',text:'安全送达'});
-  assert.equal(f.calls.filter(c=>c.type==='send').length,1);
-  assert.equal(f.calls.at(-1).payload.body.elements[0].content,'安全送达');
+  assert.equal(f.calls.filter(c=>c.type==='send').length,3);
+  assert.equal(f.calls.at(-1).body.card.body.elements[0].content,'安全送达');
  }finally{await t.close()}
 });
 
@@ -482,10 +487,73 @@ test('Feishu preserves recent long drafts, constrains tools independently and re
  const {draftCard}=await import('../transport.js');
  const thoughts=draftCard({status:'completed',drafts:['第一段\n\n第二段','接着第三段'],text:'最终正文'});
  const thoughtContent=thoughts.body.elements[0].elements[0].content;
- assert.equal(thoughtContent,'第一段\n\n第二段\n\n接着第三段');
+ assert.equal(thoughtContent,'💭 第一段\n\n第二段\n\n💭 接着第三段');
  assert(!thoughtContent.includes('**思考 1**'));
  assert(!thoughtContent.includes('思考 2'));
- assert.equal(thoughts.body.elements[0].header.title.content,'💭 思考');
+ assert.equal(thoughts.body.elements[0].header.title.content,'📝 过程记录');
+});
+
+test('Feishu draft and thinking switches are independent in progress and final cards',async()=>{
+ const preview={status:'thinking',activity:{timeline:[
+  {type:'draft',text:'仅主人能看到的推理'},
+  {type:'public-draft',text:'已公开的阶段性草稿'}
+ ],activeTextDraft:'仍在输出的临时正文'}};
+ const withoutThinking=schema.validate({streaming:{progress:{narration:false,draft:true,commentary:false}}}).streaming;
+ const visible=card(preview,[],withoutThinking).body.elements[0].content;
+ assert(visible.includes('📝 已公开的阶段性草稿'));
+ assert(visible.includes('📝 仍在输出的临时正文'));
+ assert(!visible.includes('仅主人能看到的推理'));
+ const withoutDraft=schema.validate({streaming:{progress:{narration:true,draft:false,commentary:false}}}).streaming;
+ const hidden=card(preview,[],withoutDraft).body.elements[0].content;
+ assert(hidden.includes('💭 仅主人能看到的推理'));
+ assert(!hidden.includes('已公开的阶段性草稿'));
+ assert(!hidden.includes('仍在输出的临时正文'));
+ const f=fixture(withoutThinking),t=await f.create();
+ try{
+  const dm={...origin,kind:'dm'};
+  await t.progress(dm,preview);
+  await t.send(dm,{status:'completed',text:'正式答复',publicDrafts:['已公开的阶段性草稿']});
+  const retained=f.calls.filter(c=>c.type==='update').at(-1).payload;
+  assert.equal(retained.body.elements[0].header.title.content,'📝 过程记录');
+  const content=retained.body.elements[0].elements[0].content;
+  assert(content.includes('📝 已公开的阶段性草稿'));
+  assert(!content.includes('仅主人能看到的推理'));
+  assert.equal(f.calls.filter(c=>c.type==='send').at(-1).body.card.body.elements[0].content,'正式答复');
+ }finally{await t.close();}
+});
+
+test('Feishu Ask User preserves committed context and creates an independent interactive card',async()=>{
+ const f=fixture({mode:'progress',cardEngine:'patch'}),t=await f.create();
+ try{
+  const dm={...origin,kind:'dm'};
+  await t.progress(dm,{status:'generating',activity:{timeline:[{type:'public-draft',text:'分析完成，等待确认。'}]}});
+  await t.question(dm,{status:'waiting-user',text:'请选择下一步',context:'分析完成，等待确认。'},[{label:'继续',token:'token1'}]);
+  assert.deepEqual(f.calls.map(c=>c.type),['send','update','send']);
+  assert.equal(f.calls[1].payload.header.title.content,'Agent · 过程记录');
+  assert.equal(f.calls[1].payload.body.elements[0].content,'分析完成，等待确认。');
+  assert.equal(f.calls[2].body.card.body.elements[0].content,'请选择下一步');
+  assert.equal(f.calls[2].body.card.body.elements[1].value.dsh,'token1');
+  await t.question(dm,{status:'waiting-user',text:'请选择其他项',context:'分析完成，等待确认。'},[{label:'更改',token:'token2'}]);
+  assert.equal(f.calls.at(-1).type,'update','same question card is updated for multiple answers');
+  assert.equal(f.calls.at(-1).id,'card-2');
+  await t.send(dm,{status:'completed',text:'最终答复',publicDrafts:['分析完成，等待确认。']});
+  assert.equal(f.calls.at(-1).type,'send','final must not overwrite the committed context');
+  assert.equal(f.calls.at(-1).body.card.body.elements[0].content,'最终答复');
+  assert.equal(f.calls.filter(c=>c.type==='send').length,3);
+ }finally{await t.close();}
+});
+
+test('Feishu Ask User freezes CardKit progress and keeps visible transient draft when no text was committed',async()=>{
+ const kit=fakeCardKit(),f=fixture({mode:'progress',progress:{draft:true,narration:false}},{rawClient:kit.rawClient}),t=await f.create();
+ try{
+  await t.progress(origin,{status:'generating',activity:{timeline:[],activeTextDraft:'正在准备问题'}});
+  await t.question(origin,{status:'waiting-user',text:'确认吗？',context:''},[{label:'确认',token:'token'}]);
+  assert.equal(kit.calls.filter(c=>c.type==='kit-settings').length,1);
+  assert.equal(f.calls.filter(c=>c.type==='send').length,1,'question must use a new message, not edit progress');
+  assert.equal(f.calls[0].body.card.body.elements[0].content,'确认吗？');
+  await t.progress(origin,{status:'generating',activity:{timeline:[{type:'public-draft',text:'问题解决后继续'}]}});
+  assert.equal(kit.calls.filter(c=>c.type==='kit-create').length,2,'continued progress cannot overwrite frozen draft');
+ }finally{await t.close();}
 });
 
 test('Feishu progress config isolates draft length from tool limits',()=>{

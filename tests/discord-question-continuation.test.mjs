@@ -51,9 +51,9 @@ test('Ask User retains pre-question history once and sends only continuation on 
  const f=fixture(),t=await f.create();try{
   await t.progress(f.origin,{status:'generating',text:'前面已经说完'});
   await t.question(f.origin,{...question,context:'前面已经说完'},[{label:'继续',token:'mock'}]);
-  assert.equal(f.visible().filter(x=>x==='前面已经说完').length,1);
+  assert.equal(f.visible().filter(x=>x==='**📝 过程草稿**\n\n> 前面已经说完').length,1);
   await t.send(f.origin,{status,text:'前面已经说完\n\n回答之后的新内容',final:true});
-  assert.equal(f.visible().filter(x=>x==='前面已经说完').length,1);
+  assert.equal(f.visible().filter(x=>x==='**📝 过程草稿**\n\n> 前面已经说完').length,1);
   assert(f.visible().includes('回答之后的新内容'));
   assert(!f.visible().some(x=>x.includes('前面已经说完\n\n回答之后')));
  }finally{await t.close();f.close();}
@@ -75,7 +75,7 @@ test('steer after Ask User uses first-origin context to trim final sent to lates
   await t.question(f.origin,{...question,context:'前文已显示'},[{label:'继续',token:'x'}]);
   const latest={...f.origin,messageId:'user-steer'};
   await t.send(latest,{status,progressOriginMessageId:f.origin.messageId,text:'前文已显示\n\n只发送新的结论',final:true});
-  assert(f.visible().includes('前文已显示'));
+  assert(f.visible().includes('**📝 过程草稿**\n\n> 前文已显示'));
   assert(f.visible().includes('只发送新的结论'));
   assert(!f.visible().some(x=>x.includes('前文已显示\n\n只发送新的结论')));
   assert.equal(f.removed.length,1,'the old Ask User question is retired, not the preserved prefix');
@@ -88,7 +88,7 @@ test('without prior Ask User a final remains unchanged; exact-context final does
   const later={...f.origin,messageId:'user-second'};
   await t.question(later,{...question,context:'已告知全部信息'},[{label:'好',token:'x'}]);
   await t.send(later,{status,text:'已告知全部信息',final:true});
-  assert.equal(f.visible().filter(x=>x==='已告知全部信息').length,1);
+  assert.equal(f.visible().filter(x=>x==='**📝 过程草稿**\n\n> 已告知全部信息').length,1);
   assert(f.visible().includes('本轮已完成。'));
  }finally{await t.close();f.close();}
 });

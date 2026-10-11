@@ -11,4 +11,15 @@ jobs:
         with:
           node-version: "24"
       - run: npm test
+      - name: Syntax-check channel, settings, and CardKit modules
+        run: |
+          node --check lib/bridge.js
+          node --check lib/progress-lines.js
+          node --check lib/client.js
+          node --check channels/discord/transport.js
+          node --check channels/feishu/transport.js
+          node --check channels/feishu/config.js
+          node --check channels/feishu/cardkit.js
+          node --check channels/feishu/tests/progress.test.mjs
+          node --check tests/bridge.test.mjs
       - run: npm pack --dry-run

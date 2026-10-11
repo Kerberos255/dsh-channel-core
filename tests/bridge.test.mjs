@@ -423,6 +423,31 @@ test('overlapping streaming reasoning, block-end and committed native reasoning 
  }finally{await f.close();}
 });
 
+test('Feishu public draft history is retained without enabling private reasoning, only for verified owner DM',async()=>{
+ const f=fixture();
+ try{
+  const adapter=f.bridge.adapters.get(JSON.stringify(['feishu','test'])).adapter;
+  adapter.showPublicDrafts=true;
+  adapter.showNarration=false;
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[{type:'reasoning',text:'PRIVATE-REASONING'},{type:'text',text:'先检查配置'},{type:'tool-call',name:'read_file'}]}}});
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:1,message:{content:[{type:'text',text:'这是正式回复'}]}}});
+  f.bridge.event(f.session,{type:'turn/end',data:{turn:1,reason:{kind:'completed'}}});
+  await f.bridge.idle();
+  assert.deepEqual(f.sent[0].body.publicDrafts,['先检查配置']);
+  assert.equal(f.sent[0].body.drafts,undefined);
+  assert(!JSON.stringify(f.sent[0].body).includes('PRIVATE-REASONING'));
+ }finally{await f.close();}
+ const g=fixture();
+ try{
+  g.bridge.adapters.get(JSON.stringify(['feishu','test'])).adapter.showPublicDrafts=true;
+  g.store.setOwner('feishu','test','other-user');
+  g.bridge.event(g.session,{type:'assistant/message',data:{turn:1,message:{content:[{type:'text',text:'私聊过程'},{type:'tool-call',name:'read_file'}]}}});
+  g.bridge.event(g.session,{type:'turn/end',data:{turn:1,reason:{kind:'completed'}}});
+  await g.bridge.idle();
+  assert.equal(g.sent[0].body.publicDrafts,undefined,'non-owner must not receive retained draft history');
+ }finally{await g.close();}
+});
+
 test('Feishu final card contains only the last native non-tool reply, not accumulated progress drafts',async()=>{
  const f=fixture();
  try{
