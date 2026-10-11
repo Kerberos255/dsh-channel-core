@@ -2,7 +2,7 @@ import { checkAbort, discordAttachment, splitDiscord, statusLabel } from 'dsh-ch
 import { renderProgress,renderNotice,renderHeading,footerSuffix } from './progress.js';
 import { renderFooter } from './footer.js';
 import { afterPresentedContext } from './question-context.js';
-import { formatFinalWithQuotedDraft } from './final-format.js';
+import { formatAskUserDraft,formatFinalWithQuotedDraft } from './final-format.js';
 import { currentSelection, decodeModel, defaultEffort, describeSelection, effortChoices, modelChoices } from './model-commands.js';
 
 // Discord 的"正在输入"提示约 10 秒后自动消失，所以按心跳刷新；上限是保险丝，
@@ -173,7 +173,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
     const id=key(origin),context=String(body.context??''),previous=questionContexts.get(id)??'';
     const added=context.startsWith(previous)?context.slice(previous.length).trimStart():context;
     if(added){
-      for(const part of splitDiscord(added)){
+      for(const part of formatAskUserDraft(added)){
         checkAbort(signal);await present(origin,body,[],part);preserve(origin);
       }
       questionContexts.set(id,context);
@@ -220,8 +220,12 @@ export async function createTransport({config,credentials,signal,receive,state,a
       const metrics=await readRuntimeMetrics(body.sessionId,true);
       const footer=renderFooter(config.streaming.footer,body,metrics);
       const footnote=footerSuffix(footer);
+      // Ask User committed context was already shown as a quoted message.
+      // If another native public prelude is committed after the question,
+      // quote only that new part next to the final reply; never quote twice.
+      const remainingPrelude=afterPresentedContext(body.draftPrelude,context);
       const parts=body.status==='completed'
-        ?formatFinalWithQuotedDraft(finalText,{draftPrelude:body.draftPrelude,finalReplyText:body.finalReplyText,footnote})
+        ?formatFinalWithQuotedDraft(finalText,{draftPrelude:remainingPrelude,finalReplyText:body.finalReplyText,footnote})
         :formatFinalWithQuotedDraft(finalText,{footnote});
       const oldKey=body.progressOriginMessageId?key({...origin,messageId:body.progressOriginMessageId}):null;
       const oldProgress=oldKey&&oldKey!==key(origin)?progress.get(oldKey):null;
