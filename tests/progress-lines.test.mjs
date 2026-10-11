@@ -75,11 +75,11 @@ test('live drafts, interim public messages and tools share one chronological rol
  const opt={toolProgress:true,commentary:true,narration:true,toolDetail:true,maxLines:5,maxLineChars:120};
  const rows=renderProgressLines(body,opt);
  assert.equal(rows.length,5);
- assert(rows[0].includes('草稿 · 先看文档'));
+ assert(rows[0].includes('先看文档'));
  assert(rows[1].includes('README.md'));
  assert(rows[2].includes('分析依赖'));
  assert(rows[3].includes('npm test'));
- assert(rows[4].includes('草稿 · 再检查测试反馈'));
+ assert(rows[4].includes('再检查测试反馈'));
  assert(!renderProgressLines(body,{...opt,narration:false}).some(x=>x.includes('再检查测试反馈')));
 });
 
@@ -91,10 +91,10 @@ test('Discord draft retention: rapid tools do not push the most recent public dr
  const opt={...options,maxLines:5,narration:true,pinDrafts:true};
  const actual=renderProgressLines({activity},opt);
  assert.equal(actual.length,5);
- assert(actual[0].includes('📝 草稿 · 先检查依赖'),actual.join('\n'));
+ assert(actual[0].includes('📝 先检查依赖'),actual.join('\n'));
  assert(actual.slice(1).every(row=>row.startsWith('✅')),actual.join('\n'));
  assert(actual.at(-1).includes('run-8'),actual.join('\n'));
- assert(!renderProgressLines({activity},{...opt,pinDrafts:false}).some(row=>row.includes('📝 草稿')));
+ assert(!renderProgressLines({activity},{...opt,pinDrafts:false}).some(row=>row.startsWith('📝 ')));
 });
 
 test('Discord draft retention reserves lines for the latest real text draft and thinking, not fabricated content',()=>{
@@ -107,7 +107,7 @@ test('Discord draft retention reserves lines for the latest real text draft and 
  const actual=renderProgressLines({activity:{timeline}},opt);
  assert.equal(actual.length,5);
  assert(actual[0].includes('推理片段一'));
- assert(actual[1].includes('📝 草稿 · 先把计划'));
+ assert(actual[1].includes('📝 先把计划'));
  assert(actual.slice(2).every(row=>row.startsWith('✅')));
  assert(actual.at(-1).includes('step-9'));
  const onlyTools=renderProgressLines({activity:{timeline:timeline.slice(2)}},opt);
@@ -123,7 +123,7 @@ test('Discord places the newest ongoing draft before tool rows',()=>{
  ],activeTextDraft:'临时新段落'};
  const rows=renderProgressLines({activity},{...options,maxLines:5,narration:true,pinDrafts:true});
  assert.equal(rows.length,5);
- assert(rows[0].includes('📝 草稿 · 临时新段落'));
+ assert(rows[0].includes('📝 临时新段落'));
  assert(rows[1].includes('file-4'));
  assert(rows.at(-1).includes('file-7'));
 });
@@ -140,7 +140,7 @@ test('Discord narrative text has its own 600-character budget and uses the lates
  const lines=renderProgressLines(body,opts);
  assert.equal(lines.length,4);
  assert(lines[0].length<=600&&lines[0].includes('新的思考末尾')&&lines[0].startsWith('💭 …'));
- assert(lines[1].length<=600&&lines[1].includes('此处是新的草稿末尾')&&lines[1].startsWith('📝 草稿 · …'));
+ assert(lines[1].length<=600&&lines[1].includes('此处是新的草稿末尾')&&lines[1].startsWith('📝 …'));
  assert(lines[2].length<=120&&lines[2].startsWith('⏳ 执行命令'));
  assert(lines[3].length<=600&&lines[3].endsWith('现在正在输出'));
  const old=renderProgressLines(body,{...opts,draftMaxChars:undefined});
@@ -168,13 +168,13 @@ test('Discord always places thinking above drafts when both exist, independently
  const rows=renderProgressLines({activity},selected);
  assert.deepEqual(rows,[
    '💭 后来才收到的思考',
-   '📝 草稿 · 前一阶段公开文本',
-   '📝 草稿 · 正在生成的后续草稿',
+   '📝 前一阶段公开文本',
+   '📝 正在生成的后续草稿',
    '✅ 读取文件 · A.txt',
    '⏳ 执行命令 · npm test'
  ]);
  const old=renderProgressLines({activity},{...selected,pinDrafts:false});
- assert(old[0].startsWith('📝 草稿'),'Feishu continues preserving original chronology');
+ assert(old[0].startsWith('📝 前一阶段公开文本'),'legacy renderer preserves original chronology');
  assert(old[2].startsWith('💭 '));
 });
 test('Discord thinking above draft also applies when tool overflow triggers pinning',()=>{
@@ -186,7 +186,7 @@ test('Discord thinking above draft also applies when tool overflow triggers pinn
  const rows=renderProgressLines({activity},{...options,narration:true,commentary:true,maxLines:5,pinDrafts:true});
  assert.equal(rows.length,5);
  assert(rows[0].includes('💭 新思考'));
- assert(rows[1].includes('📝 草稿 · 旧草稿'));
+ assert(rows[1].includes('📝 旧草稿'));
  assert(rows.at(-1).includes('tool-8'));
 });
 
@@ -210,7 +210,7 @@ test('Discord paragraphs survive latest-tail clipping and preserve complete Unic
  const settings={...options,narration:true,draftMaxChars:220,pinDrafts:true};
  const text='旧正文'.repeat(120)+'\n\n新段落的开始\n第二行 🐋\n\n收尾';
  const [draft]=renderProgressLines({activity:{timeline:[{type:'public-draft',text}]}},settings);
- assert(draft.startsWith('📝 草稿 · …'));
+ assert(draft.startsWith('📝 …'));
  assert(draft.includes('\n\n收尾'));
  assert(draft.endsWith('收尾'));
  assert(draft.length<=220);
