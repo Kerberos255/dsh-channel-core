@@ -117,7 +117,7 @@ function FileConfigPage({ scope, title, description, fields, actionLabel, creden
       e('div',{className:'dpc-control'},credentialApi&&credentials&&snapshot.value
         ?e(CredentialsPage,{api:credentialApi,refs:credentials(snapshot.value),writable:snapshot.writable,title:spec.label,inline:true})
         :e('small',null,'凭证服务暂不可用')));
-    if (spec.type === 'readonly') input = e('input', { ...common, type: 'text', readOnly: true, value: snapshot.details?.[spec.detail] ?? '', placeholder: spec.placeholder });
+    if (spec.type === 'readonly') input = e('div', { className: 'dpc-status', id }, snapshot.details?.[spec.detail] ?? spec.placeholder ?? '—');
     else if (spec.type === 'boolean') input = e(DshSwitch, { label: spec.label, disabled: common.disabled, checked: value, onChange: next => change(spec.key, next) });
     else if (spec.type === 'multiline') input = e('textarea', {...common,rows:5,value,onChange:event=>change(spec.key,event.target.value)});
     else if (spec.type === 'list') input = e('textarea', {...common, rows: Math.max(3,Math.min(8,value.length+1)), value:editor.listText?.[spec.key]??value.join('\n'),
@@ -244,6 +244,7 @@ function installConfigPage(ctx, options) {
       .dpc-field{display:grid;grid-template-columns:minmax(180px,1fr) minmax(160px,280px);gap:24px;padding:18px 0;border-bottom:1px solid var(--dsw-alias-border-l2);align-items:center}
       .dpc-label label{line-height:22px;font-weight:500}.dpc-label small{display:block;margin-top:4px;font-size:12px}
       .dpc-control{min-width:0}.dpc-boolean .dpc-control{justify-self:end}
+      .dpc-status{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary);word-break:break-word;line-height:1.6}
       .dpc-field input:not([type=checkbox]),.dpc-field select,.dpc-field textarea{box-sizing:border-box;width:100%;padding:9px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:inherit;font:inherit}.dpc-field textarea{resize:vertical;line-height:1.6}
       .dpc-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:24px}
       .dpc-order{margin:0;padding:0;list-style:none;display:grid;gap:4px}.dpc-order li{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;background:var(--dsw-alias-bg-layer-2)}
