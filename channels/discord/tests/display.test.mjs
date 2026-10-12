@@ -211,7 +211,7 @@ test('actual Discord completed delivery wraps committed public prelude in quote,
   await t.send(origin,{sessionId:'session',status:'completed',text:draft+'\n\n'+formal,draftPrelude:draft,finalReplyText:formal});
   const message=f.calls.filter(call=>call.kind==='edit').at(-1).body.content;
   assert(message.includes('> 先看配置。\n> \n> 再执行测试。'));
-  assert(message.includes('**✅ 正式回复**\n\n**检查结果**\n\n- 测试通过'));
+  assert(message.includes('**检查结果**\n\n- 测试通过'));
   assert(message.endsWith('-# deepseek/v4 · 上下文 36k tokens'));
   assert.equal(f.calls.filter(call=>call.kind==='send').length,1);
  }finally{await t.close();}

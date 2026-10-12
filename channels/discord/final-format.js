@@ -1,7 +1,6 @@
 import { splitDiscord } from 'dsh-channel-core/transport-utils';
 import { convertMarkdownTables } from './tables.js';
 
-const FINAL='**✅ 正式回复**\n\n';
 const MAX_MESSAGE_CHARS=1900;
 
 /** Discord native blockquote: prefix every physical line, including blanks.
@@ -38,14 +37,13 @@ export function formatFinalWithQuotedDraft(text,{draftPrelude='',finalReplyText=
   const draft=String(draftPrelude);
   const answer=convertMarkdownTables(finalReplyText);
   const quoted=quotePublicDraft(draft);
-  const combined=quoted+'\n\n'+FINAL+answer+footnote;
+  const combined=quoted+'\n\n'+answer+footnote;
   if(combined.length<=MAX_MESSAGE_CHARS)return [combined];
 
   // Split before adding quote markers so code fences remain balanced, and
   // leave room for the > prefix on every line, even with many empty lines.
   const draftParts=splitDiscord(draft,800).map(part=>quotePublicDraft(part));
-  const answerParts=splitDiscord(answer,Math.max(600,MAX_MESSAGE_CHARS-FINAL.length-footnote.length));
-  answerParts[0]=FINAL+answerParts[0];
+  const answerParts=splitDiscord(answer,Math.max(600,MAX_MESSAGE_CHARS-footnote.length));
   answerParts[answerParts.length-1]+=footnote;
   return [...draftParts,...answerParts];
 }

@@ -22,7 +22,7 @@ test('quote wrapper keeps every original paragraph inside the left-bar quote',()
   draftPrelude:'检查配置\n\n第二段',finalReplyText:'**结果**\n\n完成',
   footnote:'\n\n-# model · 上下文 20k'});
  assert.deepEqual(parts,[
-  '> 检查配置\n> \n> 第二段\n\n**✅ 正式回复**\n\n**结果**\n\n完成\n\n-# model · 上下文 20k'
+  '> 检查配置\n> \n> 第二段\n\n**结果**\n\n完成\n\n-# model · 上下文 20k'
  ]);
 });
 
@@ -42,7 +42,7 @@ test('very long multiline and fenced-code drafts split safely, without losing fi
  assert(parts.length>4);
  assert(parts.every(part=>part.length<=1900));
  assert(parts[0].startsWith('> '));
- assert(parts.some(part=>part.startsWith('**✅ 正式回复**')));
+ assert(parts.some(part=>part.startsWith('**正式回答**')),'final markdown survives');
  assert(parts.at(-1).endsWith('\n\n-# 模型 · 上下文 100k'));
  assert(!parts.join('\n').includes('PRIVATE-REASONING'));
 });

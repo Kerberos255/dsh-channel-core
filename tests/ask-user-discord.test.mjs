@@ -89,7 +89,7 @@ test('Ask User quoted history and later committed draft are each shown once',asy
   const visible=[...f.visible.values()];
   assert.deepEqual(visible,[
    '> A',
-   '> B\n\n**✅ 正式回复**\n\nC'
+   '> B\n\nC'
   ]);
  }finally{await t.close();}
 });

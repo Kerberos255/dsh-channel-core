@@ -107,7 +107,7 @@ test('Discord and Feishu align functional groups and keep infrequent settings in
       assert.equal(field.group,'回复与显示');
       assert.equal(field.fold,'更多显示设置');
     }
-    assert.equal(byKey.get('streaming.progress.draft').label,'显示草稿');
+    assert.equal(byKey.get('streaming.progress.draft').label,'显示草稿过程');
     assert.equal(byKey.get('streaming.progress.draft').type,'boolean');
     assert.deepEqual(byKey.get('streaming.progress.draft').when,{'streaming.mode':'progress'});
     assert.equal(byKey.get('streaming.progress.maxLines').label,'最多显示进度条目');

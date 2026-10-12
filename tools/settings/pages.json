@@ -346,7 +346,7 @@
         "when": {
           "streaming.mode": "progress"
         },
-        "help": "开启后，最终回复会把本轮已提交的公开草稿以引用块附在正文之前；关闭则只发送正式回复。与「显示思考」不同：那个控制进度卡里的未提交内容，这个控制最终消息是否保留草稿。默认开启。"
+        "help": "控制最终回复是否保留本轮的草稿过程，关闭后只发送正式回复。与「显示思考」不同：那个控制进度卡里的未提交内容。默认开启。"
       },
       {
         "key": "streaming.progress.narration",
@@ -743,13 +743,13 @@
       {
         "key": "streaming.progress.draft",
         "group": "回复与显示",
-        "label": "显示草稿",
+        "label": "显示草稿过程",
         "type": "boolean",
         "advanced": false,
         "when": {
           "streaming.mode": "progress"
         },
-        "help": "单独控制已提交的阶段性公开文字及主人私聊中的实时正文草稿；关闭思考不会隐藏草稿。完成后与思考一同归入「过程记录」，默认开启。"
+        "help": "控制最终回复是否保留本轮的草稿过程，关闭后只发送正式回复。与「显示思考」不同：那个控制进度卡里的未提交内容。默认开启。"
       },
       {
         "key": "streaming.progress.narration",
