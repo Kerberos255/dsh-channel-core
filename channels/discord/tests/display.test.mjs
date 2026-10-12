@@ -24,7 +24,7 @@ function fixture(streaming,stats={model:'deepseek/deepseek-v4',contextTokens:120
  return {calls,create:()=>createTransport({config:schema.validate({streaming,...configOverride}),credentials:['mock'],signal:new AbortController().signal,
    receive:async()=>{},state:()=>{},action:async()=>{},sessions:async()=>[],host:{runtimeMetrics:async()=>stats,defaultAgentName:()=> '小虎鲸'}},sdk)};
 }
-const setup=()=>({mode:'progress',progress:{narration:true}});
+const setup=()=>({mode:'progress',progress:{narration:true,draft:false}});
 
 test('Discord removed all alternate message styles and keeps runtime footer settings',()=>{
  const base=schema.defaults.streaming;
@@ -61,7 +61,8 @@ test('plain progress shows model, context, drafts and tools; final becomes only 
    assert(first.content.includes('npm test'));
    assert(first.content.includes('上下文 12k tokens'));
    assert(first.content.includes('deepseek/deepseek-v4'));
-   assert.equal(t.showNarration,false,'no draft history in final replies');
+   assert.equal(t.showNarration,true,'narration now follows the config switch');
+   assert.equal(t.showPublicDrafts,false,'draft history stays out of final replies when the switch is off');
    await t.send(origin,{sessionId:'s1',status:'completed',durationMs:12000,final:true,text:'最终正文'});
    const final=f.calls.find(x=>x.kind==='edit').body;
    assert(final.content.startsWith('最终正文'));

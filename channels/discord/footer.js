@@ -39,3 +39,4 @@ export function renderFooter(choices={},body={},metrics={}){
   }
   return parts.join(' · ').slice(0,300);
 }
+

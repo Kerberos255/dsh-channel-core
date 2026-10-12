@@ -197,16 +197,16 @@ test('removed identity links stop future cross-channel sharing',()=>{
   store.syncAliases('feishu','test',[]);assert.notEqual(store.identity(alias),'shared');store.close();
 });
 test('channel gates and namespaces isolate groups, actors, presets and workspaces',()=>{
-  const config={allowedUsers:['a'],allowGroups:true,allowedGroups:['g'],requireMention:true,workspacePath:'/virtual/dsh/default-workspace',agentPreset:'agent',memoryNamespace:'private'};
+  const config={allowedUsers:['a'],allowGroups:true,allowedGroups:['g'],requireMention:true,workspacePath:'E:/dsh/default-workspace',agentPreset:'agent',memoryNamespace:'private'};
   assert(allowed({userId:'a',kind:'dm'},config));assert(!allowed({userId:'a',kind:'group',conversationId:'g'},config));assert(!allowed({userId:'b',kind:'dm'},config));
   assert(allowed({userId:'a',kind:'thread',conversationId:'g',mentionedBot:true},config));
-  assert.notEqual(channelScope(config).workspaceId,channelScope({...config,workspacePath:'/virtual/dsh/another'}).workspaceId);
+  assert.notEqual(channelScope(config).workspaceId,channelScope({...config,workspacePath:'E:/dsh/another'}).workspaceId);
 });
 test('runtime saves reconnect once, clears old listeners and contains credential errors',async()=>{
   const callbacks=new Set(),events=new Map(),transports=[],registrations=[];
   const config={enabled:true,allowedUsers:['a'],accountId:'test',identityLinks:[],appId:'cli-fixture'};
   const settings={configFile:{value:config,subscribe(fn){callbacks.add(fn);return ()=>callbacks.delete(fn);}}};
-  const ctx={credentials:{async resolve(){return {value:'fixture'};}},channelCore:{resolveWorkspace:async()=> '/virtual/dsh/fixture-workspace',store:{syncAliases(){}},bridge:{register(){registrations.push(1);return ()=>{registrations.pop();};}}},on(name,fn){events.set(name,fn);return ()=>events.delete(name);}};
+  const ctx={credentials:{async resolve(){return {value:'fixture'};}},channelCore:{resolveWorkspace:async()=> 'E:/dsh/fixture-workspace',store:{syncAliases(){}},bridge:{register(){registrations.push(1);return ()=>{registrations.pop();};}}},on(name,fn){events.set(name,fn);return ()=>events.delete(name);}};
   const runtime=new ChannelRuntime(ctx,settings,{provider:'feishu',credentialRefs:()=>['FEISHU_APP_SECRET'],createTransport:async({signal})=>{const item={signal,started:0,closed:0,start(){item.started++;},close(){item.closed++;return Promise.resolve();}};transports.push(item);return item;}});
   await runtime.reconfigure();assert(runtime.details().connected);await runtime.reconfigure();assert.equal(registrations.length,1);assert(transports[0].signal.aborted);
   await runtime.close();assert.equal(registrations.length,0);assert.equal(callbacks.size,0);assert.equal(events.size,0);
@@ -611,7 +611,7 @@ test('Discord final marks only earlier native committed public messages as draft
  try{
   const reg=f.bridge.adapters.get(JSON.stringify(['feishu','test']));
   await f.unregister();
-  const unregister=f.bridge.register('discord','test',{send:async(origin,body)=>{f.sent.push({origin,body});return {messageId:'done'};}});
+  const unregister=f.bridge.register('discord','test',{showPublicDrafts:true,send:async(origin,body)=>{f.sent.push({origin,body});return {messageId:'done'};}});
   const from={...f.origin,provider:'discord'};
   f.store.setOwner('discord','test','user-a');
   f.store.claim({key:'discord-draft',requestId:'discord-draft',sessionId:f.session.id,origin:from,payload:'user'});
@@ -649,6 +649,28 @@ test('Discord one-message reply and uncommitted stream reasoning do not create a
   assert.equal(body.text,'真正的完整回复');
   assert.equal(body.draftPrelude,undefined);
   assert.equal(body.finalReplyText,undefined);
+  await off();
+ }finally{await f.close();}
+});
+
+test('Discord omits the committed draft prelude when the draft switch is off',async()=>{
+ const f=fixture();
+ try{
+  await f.unregister();
+  const off=f.bridge.register('discord','test',{showPublicDrafts:false,send:async(origin,body)=>{f.sent.push({origin,body});return {messageId:'done'};}});
+  const from={...f.origin,provider:'discord'};
+  f.store.setOwner('discord','test','user-a');
+  f.store.claim({key:'discord-nodraft',requestId:'discord-nodraft',sessionId:f.session.id,origin:from,payload:'user'});
+  f.bridge.claimed(f.session,'discord-nodraft',4);
+  const event=(turn,content)=>f.bridge.event(f.session,{type:'assistant/message',data:{turn,message:{content}}});
+  event(4,[{type:'text',text:'先检查配置。'},{type:'tool-call',name:'read_file'}]);
+  event(4,[{type:'text',text:'**正式结论**\n\n所有检查通过。'}]);
+  f.bridge.event(f.session,{type:'turn/end',data:{turn:4,reason:{kind:'completed'}}});
+  await f.bridge.idle();
+  const b=f.sent.find(v=>v.origin.provider==='discord').body;
+  assert.equal(b.draftPrelude,undefined,'关闭草稿开关时不应附带草稿');
+  assert.equal(b.finalReplyText,undefined);
+  assert.equal(b.text,'**正式结论**\n\n所有检查通过。');
   await off();
  }finally{await f.close();}
 });

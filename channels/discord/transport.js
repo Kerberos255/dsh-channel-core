@@ -289,8 +289,9 @@ export async function createTransport({config,credentials,signal,receive,state,a
   return {
     throttleMs:config.throttleMs,
     coalesceProgress:true,
-    // Discord shows draft only while running; final delivery stores no draft text.
-    showNarration:false,
+    // Final delivery may quote committed public drafts when the draft switch is on.
+    showNarration:config.streaming.mode==='progress'&&config.streaming.progress.narration,
+    showPublicDrafts:config.streaming.mode==='progress'&&config.streaming.progress.draft,
     details:()=>({applicationId:client.application?.id??'',botId:client.user?.id??''}),
     async start(){await client.login(credentials[0]);checkAbort(signal);if(config.registerCommands)for(const command of slashCommands)await client.application.commands.create(command);},
     close,

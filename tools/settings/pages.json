@@ -338,6 +338,17 @@
         "help": "在工具名后附上简短目标，例如“执行命令 · npm pack”；敏感内容自动打码。"
       },
       {
+        "key": "streaming.progress.draft",
+        "label": "显示草稿过程",
+        "type": "boolean",
+        "group": "回复与显示",
+        "advanced": false,
+        "when": {
+          "streaming.mode": "progress"
+        },
+        "help": "开启后，最终回复会把本轮已提交的公开草稿以引用块附在正文之前；关闭则只发送正式回复。与「显示思考」不同：那个控制进度卡里的未提交内容，这个控制最终消息是否保留草稿。默认开启。"
+      },
+      {
         "key": "streaming.progress.narration",
         "label": "显示思考",
         "type": "boolean",

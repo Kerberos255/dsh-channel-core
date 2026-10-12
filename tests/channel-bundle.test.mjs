@@ -75,7 +75,7 @@ test('Discord and Feishu align functional groups and keep infrequent settings in
  const shared=['enabled','credentialSecret','allowedUsers','allowGroups','allowedGroups','requireMention','rolePreset','inputMode','streaming.mode','streaming.progress.toolProgress','streaming.progress.commentary','streaming.progress.toolDetail','streaming.progress.narration','throttleMs','streaming.progress.maxLines','streaming.progress.maxLineChars','ownerMode','ownerUserId','ownerStatus','memoryNamespace','identityLinks','attachments','maxAttachmentMB'];
  for(const provider of ['discord','feishu']){
   const fields=pages[provider].fields,byKey=new Map(fields.map(field=>[field.key,field]));
-  assert.equal(fields.length,provider==='discord'?40:39,'all config fields remain available');
+  assert.equal(fields.length,provider==='discord'?41:39,'all config fields remain available');
   if(provider==='discord'){
     assert(!byKey.has('streaming.style'),'removed message style must not be configurable');
     assert.equal(byKey.get('displayIcon').group,'回复与显示');

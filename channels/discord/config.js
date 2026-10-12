@@ -4,7 +4,7 @@ import { ConfigError } from '../../lib/channel-plugin-settings/file-config.js';
 const ref=v=>/^[A-Z_][A-Z0-9_]*$/.test(v);
 const displayIcon=v=>typeof v==='string'&&v.trim().length>0&&Array.from(v).length<=32&&!/[@`*<>\\\x00-\x1f\x7f]/.test(v);
 const id=v=>v.trim().length>0&&v.length<=256&&!/[\x00-\x1f]/.test(v);
-const progressDefaults={toolProgress:true,commentary:true,narration:false,toolDetail:true,maxLines:5,maxLineChars:120,draftMaxChars:600};
+const progressDefaults={toolProgress:true,commentary:true,draft:true,narration:false,toolDetail:true,maxLines:5,maxLineChars:120,draftMaxChars:600};
 const footerDefaults={status:false,elapsed:false,model:true,context:true,tokens:false,cache:false};
 const invalid=()=>{throw new ConfigError('invalid-config','streaming 配置无效，请检查回复模式和底部信息选项');};
 function streaming(value){
@@ -19,7 +19,7 @@ function streaming(value){
   if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(key=>!Object.hasOwn(progressDefaults,key)))invalid();
   if(!footerInput||typeof footerInput!=='object'||Array.isArray(footerInput)||Object.keys(footerInput).some(key=>!Object.hasOwn(footerDefaults,key)))invalid();
   const progress={...progressDefaults,...input},footer={...footerDefaults,...footerInput};
-  if(typeof progress.toolProgress!=='boolean'||typeof progress.commentary!=='boolean'||typeof progress.narration!=='boolean'||typeof progress.toolDetail!=='boolean'||!Number.isSafeInteger(progress.maxLines)||progress.maxLines<1||progress.maxLines>12||!Number.isSafeInteger(progress.maxLineChars)||progress.maxLineChars<40||progress.maxLineChars>300||!Number.isSafeInteger(progress.draftMaxChars)||progress.draftMaxChars<120||progress.draftMaxChars>1000)invalid();
+  if(typeof progress.toolProgress!=='boolean'||typeof progress.commentary!=='boolean'||typeof progress.draft!=='boolean'||typeof progress.narration!=='boolean'||typeof progress.toolDetail!=='boolean'||!Number.isSafeInteger(progress.maxLines)||progress.maxLines<1||progress.maxLines>12||!Number.isSafeInteger(progress.maxLineChars)||progress.maxLineChars<40||progress.maxLineChars>300||!Number.isSafeInteger(progress.draftMaxChars)||progress.draftMaxChars<120||progress.draftMaxChars>1000)invalid();
   if(Object.values(footer).some(v=>typeof v!=='boolean'))invalid();
   return {mode,progress,footer};
 }
