@@ -122,6 +122,14 @@
         "advanced": false
       },
       {
+        "key": "autoCollectGroups",
+        "label": "自动收录新群",
+        "type": "boolean",
+        "group": "接收与权限",
+        "advanced": false,
+        "help": "开启后，收到新群消息时会自动把该群加入下面的名单，省去手工查找群 ID。注意：群成员仍需在「允许的用户」名单中才会被响应。默认关闭。"
+      },
+      {
         "key": "allowedGroups",
         "group": "接收与权限",
         "label": "允许的频道 ID",
@@ -579,6 +587,14 @@
         "label": "接收群聊消息",
         "type": "boolean",
         "advanced": false
+      },
+      {
+        "key": "autoCollectGroups",
+        "label": "自动收录新群",
+        "type": "boolean",
+        "group": "接收与权限",
+        "advanced": false,
+        "help": "开启后，收到新群消息时会自动把该群加入下面的名单，省去手工查找群 ID。注意：群成员仍需在「允许的用户」名单中才会被响应。默认关闭。"
       },
       {
         "key": "allowedGroups",

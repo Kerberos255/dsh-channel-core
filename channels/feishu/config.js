@@ -22,10 +22,10 @@ function streaming(value){
   return {mode,progress,footer,cardEngine};
 }
 const base=defineConfig({
-  enabled:false,accountId:'default',appId:'',domain:'feishu',appSecretRef:'FEISHU_APP_SECRET',allowedUsers:[],allowGroups:false,allowedGroups:[],requireMention:true,
+  enabled:false,accountId:'default',appId:'',domain:'feishu',appSecretRef:'FEISHU_APP_SECRET',allowedUsers:[],allowGroups:false,autoCollectGroups:false,allowedGroups:[],requireMention:true,
   inputMode:'inherit',agentPreset:'agent',rolePreset:'',workspacePath:'',memoryNamespace:'private',identityLinks:[],ownerMode:'first-dm',ownerUserId:'',
   streaming:streaming({mode:'progress'}),throttleMs:750,attachments:true,maxAttachmentMB:10
-},{accountId:id,appSecretRef:ref,inputMode:v=>['inherit','steering','queue','interrupt'].includes(v),domain:v=>['feishu','lark'].includes(v),workspacePath:v=>v===''||path.isAbsolute(v),memoryNamespace:id,ownerMode:v=>['first-dm','manual'].includes(v),ownerUserId:(v,c)=>v===''?c.ownerMode==='first-dm':id(v),agentPreset:v=>v===''||id(v),rolePreset:v=>v===''||id(v),allowedUsers:v=>v.length<=1000&&v.every(id),allowedGroups:v=>v.length<=1000&&v.every(id),identityLinks:v=>v.length<=1000&&v.every(s=>s.includes('=')&&s.split('=').length===2&&s.split('=').every(id)),throttleMs:v=>Number.isSafeInteger(v)&&v>=400&&v<=5000,maxAttachmentMB:v=>Number.isSafeInteger(v)&&v>=1&&v<=20});
+},{accountId:id,appSecretRef:ref,inputMode:v=>['inherit','steering','queue','interrupt'].includes(v),domain:v=>['feishu','lark'].includes(v),workspacePath:v=>v===''||path.isAbsolute(v),memoryNamespace:id,ownerMode:v=>['first-dm','manual'].includes(v),ownerUserId:(v,c)=>v===''?c.ownerMode==='first-dm':id(v),agentPreset:v=>v===''||id(v),rolePreset:v=>v===''||id(v),allowedUsers:v=>v.length<=1000&&v.every(id),allowedGroups:v=>v.length<=1000&&v.every(id),autoCollectGroups:v=>typeof v==='boolean',identityLinks:v=>v.length<=1000&&v.every(s=>s.includes('=')&&s.split('=').length===2&&s.split('=').every(id)),throttleMs:v=>Number.isSafeInteger(v)&&v>=400&&v<=5000,maxAttachmentMB:v=>Number.isSafeInteger(v)&&v>=1&&v<=20});
 export const schema={defaults:base.defaults,validate(input){
   if(!input||typeof input!=='object'||Array.isArray(input))return base.validate(input);
   return base.validate({...input,streaming:streaming(Object.hasOwn(input,'streaming')?input.streaming:base.defaults.streaming)});
