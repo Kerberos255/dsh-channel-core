@@ -13,6 +13,9 @@ jobs:
       - run: npm test
       - name: Syntax-check channel, settings, and CardKit modules
         run: |
+          node --check lib/index.js
+          node --check lib/proactive-outbound.js
+          node --check tests/proactive-outbound.test.mjs
           node --check lib/bridge.js
           node --check lib/progress-lines.js
           node --check lib/client.js

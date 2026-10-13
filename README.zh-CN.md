@@ -12,6 +12,15 @@
 - Discord Ask User 交互、飞书/Discord 进度显示；配合 Status Cards 查询当前会话的只读状态。
 - 主人身份与工作区范围核验，防止未授权私聊读取私人记忆或继承其他人的历史。
 
+## 主动消息投递
+
+Channel Core 现支持**无需用户先发送消息的主动投递**。Agent 可以通过 `channel_send` 向自己原生 DSH Session **已经绑定、且当前授权有效**的飞书或 Discord 会话发送纯文本消息；定时任务、Dream 等可信插件也可调用 `ctx.channelCore.sendToBoundSession({ sessionId, text, idempotencyKey, bindingId?, source? })`，并通过 `outboundTargets(sessionId)` 查询可选的绑定 ID。
+
+- **发送权限：** 只能发到当前 Session 已绑定的渠道。多目标需要显式填写 `bindingId`；不能随意填写任意群号或收件人，也不能跨 Session 发消息。发送前重新核验群聊允许列表和私聊/主人权限。
+- **可靠性：** 使用原有的持久化发送队列及渠道适配器；稳定的 `idempotencyKey` 可防止重复群发。返回状态为 `pending`、`sent`、`failed` 或 `uncertain`，不确定是否送达时不会盲目重试。
+- **使用方式：** 金融日报等任务可以先运行脚本、生成报告，然后显式调用 `channel_send`；插件也可直接调用内部接口。**不会自动向绑定的群聊广播所有定时任务结果**。
+- **验证：** `npm test` 运行无需 DSH 宿主的公开回归；`npm run test:host` 需要兼容 DSH 宿主及其 peer 依赖。本地曾对飞书群完成真实发送与重启后幂等验证，公开 CI 不包含平台凭证。
+
 ## 安装与兼容性
 
 要求 DSH 提供原生会话、频道和插件服务；具体 peer 依赖见 [package.json](package.json)。

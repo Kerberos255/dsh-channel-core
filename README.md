@@ -12,6 +12,15 @@
 - Native Ask User interactions and progress/status integration preserve conversational continuity.
 - Owner verification guards personal-memory access and cross-channel session transitions.
 
+## Proactive outbound messaging
+
+Channel Core supports **agent-initiated outbound messages** without a preceding inbound message. The `channel_send` tool can send a text message from the current native DSH session to its **already bound and currently authorized** Feishu or Discord conversation. The host/plugin API `ctx.channelCore.sendToBoundSession({ sessionId, text, idempotencyKey, bindingId?, source? })` allows trusted schedulers and other integrations to send the same way; `outboundTargets(sessionId)` lists eligible binding IDs without exposing destination identifiers.
+
+- **Scope:** A session can send only to its own eligible bindings. Multiple bindings require an explicit `bindingId`; arbitrary recipient IDs and cross-session delivery are not accepted. Group allowlists and current DM/owner permission are checked again on send.
+- **Delivery:** Uses the existing durable outbox and platform send adapters, with state `pending`, `sent`, `failed`, or `uncertain`. Reusing a stable idempotency key does not send the same message twice. A potentially delivered but unacknowledged message is **not** blindly retried.
+- **Automation:** Jobs can call `channel_send` after creating a report (e.g. a scheduled financial report), or trusted plugins can call `sendToBoundSession` directly. This does **not** automatically broadcast every scheduled result, and it does not grant an agent permission to send to arbitrary accounts.
+- **Testing:** `npm test` runs dependency-free public regressions. `npm run test:host` runs the broader integration suite inside a configured DSH developer environment with host peer dependencies. Live Feishu/Discord delivery has been separately exercised locally; CI cannot verify third-party credentials.
+
 ## Install
 
 Requires a compatible DSH host with the peer services in [package.json](package.json), and credentials for each channel you choose to enable.
