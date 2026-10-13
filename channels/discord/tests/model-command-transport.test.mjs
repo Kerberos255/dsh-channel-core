@@ -14,19 +14,19 @@ const catalog = {
   ],
 };
 
-async function fixture({ host, sessions = async () => ['session-1'] } = {}) {
-  const events = new EventEmitter(), calls = [], registered = [];
+async function fixture({ host, sessions = async () => ['session-1'], receive = async()=>{}, legacy = false } = {}) {
+  const events = new EventEmitter(), calls = [], registered = [], deleted = [];
   const channel = { isTextBased: () => true, messages: { edit: async () => ({ id: 'x' }) }, send: async () => ({ id: 'y' }) };
   class Client {
-    constructor() { this.user = { id: 'bot' }; this.application = { commands: { create: async command => { registered.push(command.name); return command; } } }; this.channels = { fetch: async () => channel }; }
+    constructor() { this.user = { id: 'bot' }; this.application = { commands: { create: async command => { registered.push(command.name); return command; }, fetch: async()=>new Map(legacy?[['legacy',{id:'old-dsh',name:'dsh'}]]:[]), delete: async id=>{deleted.push(id);} } }; this.channels = { fetch: async () => channel }; }
     on(...args) { events.on(...args); }
     off(...args) { events.off(...args); }
     async login() {}
     async destroy() {}
   }
   const sdk = { Client, Options: { cacheWithLimits: () => () => {} }, GatewayIntentBits: { Guilds: 1, GuildMessages: 2, DirectMessages: 3, MessageContent: 4 }, Partials: { Channel: 1 } };
-  const transport = await createTransport({ config: schema.validate({}), credentials: ['fixture'], signal: new AbortController().signal, receive: async () => {}, state: () => {}, action: async () => {}, sessions, ...(host ? { host } : {}) }, sdk);
-  return { calls, events, registered, transport };
+  const transport = await createTransport({ config: schema.validate({}), credentials: ['fixture'], signal: new AbortController().signal, receive, state: () => {}, action: async () => {}, sessions, ...(host ? { host } : {}) }, sdk);
+  return { calls, events, registered, deleted, transport };
 }
 
 function interaction({ commandName, query = '', strings = {} }) {
@@ -54,12 +54,12 @@ const hostFixture = overrides => ({
   ...overrides,
 });
 
-test('the transport registers dsh, model and think and drives /model through the Host', async () => {
+test('the transport registers flat commands and drives /model through the Host', async () => {
   const seen = [];
   const f = await fixture({ host: hostFixture({ selectModel: async request => { seen.push(request); return { selected: request }; } }) });
   try {
     await f.transport.start();
-    assert.deepEqual(f.registered, ['dsh', 'model', 'think']);
+    assert.deepEqual(f.registered, ['prompt', 'new', 'stop', 'status', 'session', 'answer', 'model', 'think']);
 
     const autocomplete = interaction({ commandName: 'model', query: 'v4', strings: { autocomplete: '1' } });
     f.events.emit('interactionCreate', autocomplete);
@@ -72,6 +72,23 @@ test('the transport registers dsh, model and think and drives /model through the
     assert.deepEqual(seen, [{ sessionId: 'session-1', provider: 'deepseek-account', model: 'deepseek-flash', reasoningEffort: 'max' }]);
     assert.match(command.result().replied, /已切换模型：deepseek-account\/deepseek-flash（推理强度：最大）/u);
   } finally { await f.transport.close(); }
+});
+
+test('old grouped /dsh is retired while /new and /stop dispatch directly',async()=>{
+ const received=[];
+ const f=await fixture({legacy:true,receive:async message=>{received.push(message.text);return {ignored:true};}});
+ try{
+  await f.transport.start();
+  assert.deepEqual(f.deleted,['old-dsh']);
+  const a=interaction({commandName:'new'});
+  f.events.emit('interactionCreate',a);
+  const b=interaction({commandName:'stop'});
+  f.events.emit('interactionCreate',b);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(received,['/new','/stop']);
+  assert.equal(a.result().replied,'当前账号或频道未被允许使用。');
+  assert.equal(b.result().replied,'当前账号或频道未被允许使用。');
+ }finally{await f.transport.close();}
 });
 
 test('/think reuses the Session selection and reports models without efforts', async () => {

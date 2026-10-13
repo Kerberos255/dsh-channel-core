@@ -25,3 +25,8 @@ See Git commit history for exact release-to-release changes. Live Feishu/Discord
 - 仅允许向当前 DSH Session 已绑定且当前授权有效的目标发送消息；多个渠道绑定需显式选择。私聊授权撤销后不能凭旧绑定继续推送。
 - 使用稳定幂等键避免重复发送，发送状态未知时禁止盲目重试，避免向群聊重复推送。
 - 新增主动消息回归测试与工具输出格式测试，并区分公共 CI 的纯本地测试、需要宿主依赖的集成测试。飞书 Test 群已由本地 DSH 实机验证；公开 CI 不保证真实平台权限。
+
+## 0.4.57 (2026-10-13)
+
+- Discord now registers independent slash commands; Feishu adds safe `/model`, provider-only shorthand, and `/think`.
+- Channel authorization and shared-session ownership are preserved.

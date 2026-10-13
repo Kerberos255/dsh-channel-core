@@ -62,3 +62,11 @@ Feishu supports CardKit component-level streaming with an IM-card compatibility 
 ## Ask User completion and optional diagnostics
 
 Discord and Feishu now update the original Ask User message to a read-only completion receipt containing the submitted question and selected/custom answer, with controls removed. Historical pre-question text is non-interactive; Feishu stage records use a collapsed panel. The channels optionally emit privacy-restricted event and failure metadata through the dsh-plugin-diagnostics service when installed. The diagnostics plugin is not required for normal channel operation.
+
+## Channel slash commands and outbound delivery
+
+Discord registers flat `/new`, `/stop`, `/status`, `/session`, `/answer`, `/prompt`, `/model` and `/think` application commands. Replacement commands register before the deprecated `/dsh` group is removed. Feishu accepts text `/new`, `/stop`, `/status`, `/session`, `/answer`, `/model` and `/think`. Feishu `/model provider` selects only when that provider has exactly one available model; otherwise it lists candidates. `/model` and `/think` show usage before the candidate list. Model changes take effect on the next turn.
+
+Verified sessions may send messages to **existing authorized channel bindings** via the `channel_send` tool or the trusted `sendToBoundSession` integration. Outbound messages use a durable delivery queue and idempotency keys; arbitrary recipients are not accepted. See the source tests for owner and delivery security coverage.
+
+CI runs host-independent unit tests with `npm test`. The complete channel adapter integration suite (`npm run test:integration`) requires a DSH host with the declared peer services and must be run in that environment before release.

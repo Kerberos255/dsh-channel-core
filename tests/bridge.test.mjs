@@ -62,7 +62,7 @@ test('progress commentary stays public while reasoning is kept as a separate nar
 test('tool detail summarizes the target and masks credential-looking arguments',async()=>{
  const f=fixture();try{
   const execute=f.events.get('tools/execute');
-  await execute({agent:f.agent,callId:'read-9',name:'read_file',arguments:{path:'E:\\dsh\\deepseek-harness\\default-workspace\\DESIGN.md'}},async()=>({isError:false,content:[]}));
+  await execute({agent:f.agent,callId:'read-9',name:'read_file',arguments:{path:'C:\\fixture\\workspace\\DESIGN.md'}},async()=>({isError:false,content:[]}));
   await execute({agent:f.agent,callId:'exec-9',name:'pwsh',arguments:{command:'npm pack --token=SUPERSECRETVALUE'}},async()=>({isError:false,content:[]}));
   await flushProgress(f);const tools=f.progress.at(-1).body.activity.tools;
   assert.equal(tools.at(-2).detail,'DESIGN.md');
@@ -197,16 +197,16 @@ test('removed identity links stop future cross-channel sharing',()=>{
   store.syncAliases('feishu','test',[]);assert.notEqual(store.identity(alias),'shared');store.close();
 });
 test('channel gates and namespaces isolate groups, actors, presets and workspaces',()=>{
-  const config={allowedUsers:['a'],allowGroups:true,allowedGroups:['g'],requireMention:true,workspacePath:'E:/dsh/default-workspace',agentPreset:'agent',memoryNamespace:'private'};
+  const config={allowedUsers:['a'],allowGroups:true,allowedGroups:['g'],requireMention:true,workspacePath:'C:/fixture/default-workspace',agentPreset:'agent',memoryNamespace:'private'};
   assert(allowed({userId:'a',kind:'dm'},config));assert(!allowed({userId:'a',kind:'group',conversationId:'g'},config));assert(!allowed({userId:'b',kind:'dm'},config));
   assert(allowed({userId:'a',kind:'thread',conversationId:'g',mentionedBot:true},config));
-  assert.notEqual(channelScope(config).workspaceId,channelScope({...config,workspacePath:'E:/dsh/another'}).workspaceId);
+  assert.notEqual(channelScope(config).workspaceId,channelScope({...config,workspacePath:'C:/fixture/another'}).workspaceId);
 });
 test('runtime saves reconnect once, clears old listeners and contains credential errors',async()=>{
   const callbacks=new Set(),events=new Map(),transports=[],registrations=[];
   const config={enabled:true,allowedUsers:['a'],accountId:'test',identityLinks:[],appId:'cli-fixture'};
   const settings={configFile:{value:config,subscribe(fn){callbacks.add(fn);return ()=>callbacks.delete(fn);}}};
-  const ctx={credentials:{async resolve(){return {value:'fixture'};}},channelCore:{resolveWorkspace:async()=> 'E:/dsh/fixture-workspace',store:{syncAliases(){}},bridge:{register(){registrations.push(1);return ()=>{registrations.pop();};}}},on(name,fn){events.set(name,fn);return ()=>events.delete(name);}};
+  const ctx={credentials:{async resolve(){return {value:'fixture'};}},channelCore:{resolveWorkspace:async()=> 'C:/fixture/workspace',store:{syncAliases(){}},bridge:{register(){registrations.push(1);return ()=>{registrations.pop();};}}},on(name,fn){events.set(name,fn);return ()=>events.delete(name);}};
   const runtime=new ChannelRuntime(ctx,settings,{provider:'feishu',credentialRefs:()=>['FEISHU_APP_SECRET'],createTransport:async({signal})=>{const item={signal,started:0,closed:0,start(){item.started++;},close(){item.closed++;return Promise.resolve();}};transports.push(item);return item;}});
   await runtime.reconfigure();assert(runtime.details().connected);await runtime.reconfigure();assert.equal(registrations.length,1);assert(transports[0].signal.aborted);
   await runtime.close();assert.equal(registrations.length,0);assert.equal(callbacks.size,0);assert.equal(events.size,0);
