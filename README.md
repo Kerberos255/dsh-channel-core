@@ -21,6 +21,16 @@ Channel Core supports **agent-initiated outbound messages** without a preceding 
 - **Automation:** Jobs can call `channel_send` after creating a report (e.g. a scheduled financial report), or trusted plugins can call `sendToBoundSession` directly. This does **not** automatically broadcast every scheduled result, and it does not grant an agent permission to send to arbitrary accounts.
 - **Testing:** `npm test` runs dependency-free public regressions. `npm run test:host` runs the broader integration suite inside a configured DSH developer environment with host peer dependencies. Live Feishu/Discord delivery has been separately exercised locally; CI cannot verify third-party credentials.
 
+## Streaming, Ask User and commands
+
+Discord streams thinking, draft and tool activity in a rolling progress message. Committed interim text can appear as a native blockquote in the completed message, separate from the final answer; unpublished/private reasoning is not promoted to public draft text. Live previews show 📝 without artificial section names.
+
+Feishu supports CardKit component streaming with an IM-card fallback. Draft and thinking have independent visibility switches; disabling thinking does not hide public draft text. Completed turns may retain a collapsed 📝 过程记录 panel when enabled. Refresh limits and optional runtime footers are channel-specific.
+
+On both channels, a submitted Ask User question becomes a read-only receipt of the question and selected or custom answer, with interactive controls removed. Previously committed context remains visible and is not re-sent as a duplicate answer.
+
+Discord uses flat `/new`, `/stop`, `/status`, `/session`, `/answer`, `/prompt`, `/model`, `/think` commands. Feishu supports text `/new`, `/stop`, `/status`, `/session`, `/answer`, `/model`, `/think`. Model selection is constrained to available models and takes effect from the next turn; ambiguous provider selections present candidates.
+
 ## Install
 
 Requires a compatible DSH host with the peer services in [package.json](package.json), and credentials for each channel you choose to enable.
@@ -52,21 +62,3 @@ Run `npm test` for portable regressions. **A green CI run does not prove live Di
 Related: [Status Cards](https://github.com/Kerberos255/dsh-status-cards) · [Dream & Memory](https://github.com/Kerberos255/dsh-memory-dreaming) · [Lossless Context](https://github.com/Kerberos255/dsh-lossless-context).
 
 MIT licensed. See [LICENSE](LICENSE). Historical release notes: [CHANGELOG.md](CHANGELOG.md).
-
-## Streaming and progress
-
-Discord shows thought, draft and tool activity in a single rolling progress message. When native assistant messages include separate committed interim text and a final reply, the completed message presents the interim text as a native Markdown blockquote and keeps the formal answer outside it. The runtime footer remains optional; long replies are split to fit Discord message limits. Ask User preserves committed pre-question text as an independent quoted draft card before the interactive prompt, so later replies do not re-send the same text. Live draft previews use only the 📝 icon without synthetic section names.
-
-Feishu supports CardKit component-level streaming with an IM-card compatibility fallback, agent role labels, and independently configurable runtime footer fields. Draft and thinking are separate switches: turning off thinking keeps public draft text visible. Completed turns may retain a collapsed **📝 过程记录** card containing enabled non-duplicate draft/thinking entries. Ask User freezes the preceding progress/context card and sends a separate interactive question card, without erasing the visible lead-in. The per-channel refresh intervals and progress budgets are configurable; real platform permissions and latency still need validation in your own environment.
-
-## Ask User completion and optional diagnostics
-
-Discord and Feishu now update the original Ask User message to a read-only completion receipt containing the submitted question and selected/custom answer, with controls removed. Historical pre-question text is non-interactive; Feishu stage records use a collapsed panel. The channels optionally emit privacy-restricted event and failure metadata through the dsh-plugin-diagnostics service when installed. The diagnostics plugin is not required for normal channel operation.
-
-## Channel slash commands and outbound delivery
-
-Discord registers flat `/new`, `/stop`, `/status`, `/session`, `/answer`, `/prompt`, `/model` and `/think` application commands. Replacement commands register before the deprecated `/dsh` group is removed. Feishu accepts text `/new`, `/stop`, `/status`, `/session`, `/answer`, `/model` and `/think`. Feishu `/model provider` selects only when that provider has exactly one available model; otherwise it lists candidates. `/model` and `/think` show usage before the candidate list. Model changes take effect on the next turn.
-
-Verified sessions may send messages to **existing authorized channel bindings** via the `channel_send` tool or the trusted `sendToBoundSession` integration. Outbound messages use a durable delivery queue and idempotency keys; arbitrary recipients are not accepted. See the source tests for owner and delivery security coverage.
-
-CI runs host-independent unit tests with `npm test`. The complete channel adapter integration suite (`npm run test:integration`) requires a DSH host with the declared peer services and must be run in that environment before release.
