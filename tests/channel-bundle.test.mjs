@@ -63,6 +63,10 @@ test('core client registers one plugin settings panel with three tabs',()=>{
  assert(source.includes("['feishu','飞书']"));
  assert(source.includes('discordChannelSettings'));
  assert(source.includes('feishuChannelSettings'));
+ assert(source.includes("taskNotifications: '任务通知'"));
+ assert(source.includes("notificationChannel: '通知渠道'"));
+ assert(source.includes("client.current.call('notificationChannels', {})"));
+ assert(source.includes("state.draft.taskNotifications ? e('label'"));
 });
 
 test('Discord and Feishu align functional groups and keep infrequent settings in their own fold',()=>{

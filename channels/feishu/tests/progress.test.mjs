@@ -23,6 +23,17 @@ function fixture(streaming={mode:'progress'},behavior={}){
 }
 const activity={tools:[{name:'read_file',status:'running',detail:'DESIGN.md'},{name:'pwsh',status:'completed',detail:'npm pack'}],commentary:'检查脚本',narration:'内部推理\n最后思考'};
 
+test('custom Feishu /status sends the native card without the generic Agent footer',async()=>{
+ const f=fixture(),t=await f.create();try{
+  const custom={schema:'2.0',header:{template:'blue',title:{tag:'plain_text',content:'🐾 白泽状态'}},body:{elements:[{tag:'markdown',content:'最近响应：23秒前'}]}};
+  await t.send(origin,{text:'private-account',status:'completed',final:true,feishuStatusCard:custom});
+  assert.equal(f.calls.length,1);
+  assert.equal(f.calls[0].type,'send');
+  assert.deepEqual(f.calls[0].body.card,custom);
+  assert(!JSON.stringify(f.calls[0]).includes('private-account'));
+ }finally{await t.close();}
+});
+
 test('schema migrates booleans, validates nested keys and defaults',()=>{
  assert.equal(schema.validate({streaming:true}).streaming.mode,'progress');
  assert.equal(schema.validate({streaming:false}).streaming.mode,'off');

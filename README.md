@@ -62,3 +62,9 @@ Run `npm test` for portable regressions. **A green CI run does not prove live Di
 Related: [Status Cards](https://github.com/Kerberos255/dsh-status-cards) · [Dream & Memory](https://github.com/Kerberos255/dsh-memory-dreaming) · [Lossless Context](https://github.com/Kerberos255/dsh-lossless-context).
 
 MIT licensed. See [LICENSE](LICENSE). Historical release notes: [CHANGELOG.md](CHANGELOG.md).
+
+## Optional task notifications
+
+Channel Core's **General & Sessions → Task notifications** option is off by default. Enabling it reveals a notification-channel selector (None, Feishu, or Discord), limited to channels enabled and configured in the current host. A failed scheduled task may send a brief alert to the verified owner's DM, never to an arbitrary chat. Recipient resolution follows the current authorized channel binding, rather than storing a Session ID, so normal `/new` and archived-session handoffs do not require reconfiguration. If there is no uniquely authorized owner destination, nothing is sent. Alert delivery uses the existing durable channel queue and stable idempotency keys; an unavailable host cannot guarantee alerts during downtime.
+
+Other plugins remain independent: they can optionally emit `dsh/task-alert` with a trusted task identifier, task kind, source and terminal state after persisting the failure. Channel Core handles selection, authorization, and delivery. Dream emits this event only on a scheduled workflow's first transition to `failed`; manual runs and successful/empty runs remain silent. Payloads exclude private conversation text, model errors and memory artifacts. No channel plugin is required to run Dream.

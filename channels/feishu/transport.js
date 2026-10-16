@@ -2,6 +2,7 @@ import { checkAbort, boundedBytes, statusLabel } from 'dsh-channel-core/transpor
 import { renderProgressLines } from 'dsh-channel-core/progress-lines';
 import { renderFooter } from '../discord/footer.js';
 import { createCardKitChannel, streamingCard } from './cardkit.js';
+import { installStatusMenu } from './menu-status.js';
 import { completedAskUserText } from '../../lib/answered-question.js';
 
 export function normalize(message,config){
@@ -142,7 +143,7 @@ export function finalCards(body,options){
     parts=next;
   }
 }
-export async function createTransport({config,credentials,signal,receive,state,action,host},sdkOverride){
+export async function createTransport({config,credentials,signal,receive,state,action,host,menuStatus},sdkOverride){
   const sdk=sdkOverride??await import('@larksuiteoapi/node-sdk');
   const silent=Object.fromEntries(['error','warn','info','debug','trace'].map(name=>[name,()=>{}]));
   const http=sdk.defaultHttpInstance?{
@@ -154,6 +155,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
     ...(http?{httpInstance:http}:{}),
     policy:{dmMode:config.ownerMode==='first-dm'||config.ownerMode==='manual'?'all':'allowlist',dmAllowlist:config.allowedUsers,groupAllowlist:config.allowGroups?config.allowedGroups:[],requireMention:config.requireMention,respondToMentionAll:false},
     safety:{chatQueue:{enabled:false},batch:{text:{delayMs:0,longDelayMs:0},media:{delayMs:0}},staleMessageWindowMs:300000},outbound:{streamThrottleMs:config.throttleMs,textChunkLimit:6000,retry:{maxAttempts:1}}});
+  installStatusMenu(channel,{onStatus:menuStatus,signal,state});
   const runtimeMetrics=new Map();
   async function presentation(body,force=false){
     const sessionId=body.sessionId,previous=sessionId?runtimeMetrics.get(sessionId):null;
@@ -318,6 +320,11 @@ export async function createTransport({config,credentials,signal,receive,state,a
     close,
     progress:config.streaming.mode!=='off'?(origin,body)=>present(origin,body,[],config.streaming):undefined,
     async send(origin,body){
+      if(body.feishuStatusCard){
+        if(body.feishuStatusCard.schema!=='2.0'||!withinBudget(body.feishuStatusCard))
+          throw new Error('feishu-status-card-invalid');
+        return channel.send(origin.conversationId,{card:body.feishuStatusCard},sendOptions(origin));
+      }
       const finished=await presentation({...body,final:true},true);
       const hasDrafts=origin.kind==='dm'&&config.streaming.mode==='progress'
         &&!questionCards.has(key(origin))&&progress.has(key(origin))&&processEntries(finished).length>0;

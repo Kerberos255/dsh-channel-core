@@ -30,7 +30,7 @@ export const slashCommands=[
 ];
 const slashCommandNames=new Set(slashCommands.map(item=>item.name));
 function interactionMessage(interaction,config,text){const thread=interaction.channel?.isThread?.();return {provider:'discord',accountId:config.accountId,conversationId:thread?interaction.channel.parentId:interaction.channelId,threadId:thread?interaction.channelId:undefined,userId:interaction.user.id,messageId:'interaction:'+interaction.id,kind:interaction.guildId?(thread?'thread':'group'):'dm',text,attachments:[],resources:[],timestamp:Math.trunc(interaction.createdTimestamp??Date.now()),mentionedBot:true};}
-export async function createTransport({config,credentials,signal,receive,state,action,sessions,host},sdkOverride){
+export async function createTransport({config,credentials,signal,receive,state,action,sessions,host,statusPanel},sdkOverride){
   const sdk=sdkOverride??await import('discord.js');
   const client=new sdk.Client({intents:[sdk.GatewayIntentBits.Guilds,sdk.GatewayIntentBits.GuildMessages,sdk.GatewayIntentBits.DirectMessages,sdk.GatewayIntentBits.MessageContent],partials:[sdk.Partials.Channel],
     rest:{timeout:15000,retries:0},makeCache:sdk.Options.cacheWithLimits({MessageManager:0,ThreadManager:100,GuildMemberManager:0,PresenceManager:0})});
@@ -83,6 +83,19 @@ export async function createTransport({config,credentials,signal,receive,state,a
           const result=await host.selectModel({sessionId,provider:selection.provider,model:selection.model,reasoningEffort:effort});
           await ephemeral(interaction,'推理强度已更新：'+describeSelection(catalog,result?.selected??{...selection,reasoningEffort:effort})+'\n从下一次请求开始生效。');return;
         }catch(error){await ephemeral(interaction,failure(error));return;}
+      }
+      // Private owner dashboard: response and refresh are ephemeral, even in guilds.
+      if(interaction.isChatInputCommand?.()&&interaction.commandName==='status'&&statusPanel){
+        await interaction.deferReply({flags:64});
+        try{
+          const dashboard=await statusPanel({userId:interaction.user.id,kind:interaction.guildId?'group':'dm'});
+          if(!dashboard){await interaction.editReply({content:'仅已验证的机器人主人可查看个人状态台。',allowedMentions:{parse:[]}});return;}
+          await interaction.editReply(dashboard);
+        }catch(error){
+          state('Discord 私人状态查询失败：'+String(error?.code??'unknown').slice(0,45),false);
+          await ephemeral(interaction,'状态台暂时不可用，请稍后重试。');
+        }
+        return;
       }
       if(interaction.isChatInputCommand?.()&&['prompt','new','stop','status','session','answer'].includes(interaction.commandName)){
         await interaction.deferReply();

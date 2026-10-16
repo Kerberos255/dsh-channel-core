@@ -12,6 +12,8 @@ window.__ModuleLoader__.load({
         steeringHelp: '新消息在步骤边界接入当前任务。', queueHelp: '新消息进入待办，在后续轮次执行。',
         interruptHelp: '使用原生取消结束当前轮，再接收新消息；待办遵循 DSH 原生规则。',
         sharedDM: '跨渠道共享私聊会话', sharedDMHelp: '已验证为同一人的渠道账号，在同一工作区和预设下共享会话。群聊与 thread 独立。',
+        taskNotifications: '任务通知', taskNotificationsHelp: '自动任务执行失败时，通知指定渠道中已验证的主人私聊。不影响任务本身；正常完成时不发送。',
+        notificationChannel: '通知渠道', noChannel: '无', noConfiguredChannel: '尚无已启用并配置的渠道；可先保存开关，配置渠道后再选择。', channelUnavailable: '（当前不可用）',
         save: '保存', saving: '正在保存…', saved: '已保存', loading: '正在读取配置…', retry: '重新读取', discard: '放弃修改并重新读取',
         unsaved: '有未保存的修改', external: '配置已在其他页面或文件中修改，请重新读取后保存。',
         effect: '保存后立即生效，后续输入使用新配置。', file: '配置文件', readFailed: '读取失败，请确认插件已启用后重试。',
@@ -24,6 +26,8 @@ window.__ModuleLoader__.load({
         steeringHelp: 'New messages join the current task at a step boundary.', queueHelp: 'New messages enter the inbox for a later turn.',
         interruptHelp: 'Use native cancellation, then accept the message. Pending input follows DSH native rules.',
         sharedDM: 'Share direct-message sessions across channels', sharedDMHelp: 'Verified accounts for the same person share sessions within the same workspace and preset. Groups and threads remain separate.',
+        taskNotifications: 'Task notifications', taskNotificationsHelp: 'Send failed scheduled-task alerts to the verified owner DM on the selected channel. Successful runs stay silent.',
+        notificationChannel: 'Notification channel', noChannel: 'None', noConfiguredChannel: 'No configured and enabled channels yet. You can save this switch and choose a channel later.', channelUnavailable: ' (currently unavailable)',
         save: 'Save', saving: 'Saving…', saved: 'Saved', loading: 'Loading configuration…', retry: 'Reload', discard: 'Discard changes and reload',
         unsaved: 'Unsaved changes', external: 'Configuration changed in another page or file. Reload before saving.',
         effect: 'Changes apply immediately to subsequent input.', file: 'Configuration file', readFailed: 'Could not load configuration. Enable the plugin and retry.',
@@ -32,7 +36,7 @@ window.__ModuleLoader__.load({
         summary: 'Configure multi-channel input policy and shared direct-message sessions.',
       },
     };
-    const same = (a, b) => a && b && a.defaultMode === b.defaultMode && a.sharedDM === b.sharedDM && a.schemaVersion === b.schemaVersion;
+    const same = (a, b) => a && b && a.defaultMode === b.defaultMode && a.sharedDM === b.sharedDM && a.taskNotifications === b.taskNotifications && a.notificationChannel === b.notificationChannel && a.schemaVersion === b.schemaVersion;
     const css = `
       .dcc-config{max-width:680px;color:var(--dsw-alias-label-primary);font-size:14px}
       .dcc-config fieldset{border:0;padding:0;margin:0;min-width:0}.dcc-config fieldset:disabled{opacity:.65}
@@ -121,6 +125,7 @@ window.__ModuleLoader__.load({
 
     function ConfigPage({ connection, t }) {
       const [state, setState] = React.useState({ snapshot: null, draft: null, loading: true, saving: false, error: '', external: false, saved: false });
+      const [channels, setChannels] = React.useState([]);
       const client = React.useRef(null);
       const sequence = React.useRef(0);
       const mounted = React.useRef(false);
@@ -131,8 +136,9 @@ window.__ModuleLoader__.load({
         const request = ++sequence.current;
         setState(previous => ({ ...previous, loading: !previous.snapshot, error: '', saved: false }));
         try {
-          const snapshot = await client.current.get();
+          const [snapshot, available] = await Promise.all([client.current.get(), client.current.call('notificationChannels', {})]);
           if (!mounted.current || sequence.current !== request) return;
+          setChannels(available);
           setState(previous => {
             const dirty = previous.draft && !same(previous.draft, previous.snapshot?.value);
             if (dirty && !discard) return { ...previous, loading: false, external: snapshot.revision !== previous.snapshot.revision };
@@ -181,6 +187,18 @@ window.__ModuleLoader__.load({
             e('div', { className: 'dcc-check' }, e('span', { className: 'dcc-title' }, t('sharedDM')),
               e(Switch, { label: t('sharedDM'), checked: state.draft.sharedDM, disabled: state.saving || state.loading, onChange: value => edit('sharedDM', value) })),
             e('p', { className: 'dcc-help' }, t('sharedDMHelp'))),
+          e('div', { className: 'dcc-field' },
+            e('div', { className: 'dcc-check' }, e('span', { className: 'dcc-title' }, t('taskNotifications')),
+              e(Switch, { label: t('taskNotifications'), checked: state.draft.taskNotifications, disabled: state.saving || state.loading, onChange: value => edit('taskNotifications', value) })),
+            e('p', { className: 'dcc-help' }, t('taskNotificationsHelp')),
+            state.draft.taskNotifications ? e('label', { className: 'dcc-field' }, e('span', { className: 'dcc-title' }, t('notificationChannel')),
+              e('select', { className: 'dcc-select', 'aria-label': t('notificationChannel'), value: state.draft.notificationChannel,
+                onChange: event => edit('notificationChannel', event.target.value) },
+                e('option', { value: 'none' }, t('noChannel')),
+                ...channels.map(channel => e('option', { key: channel.id, value: channel.id }, channel.label)),
+                state.draft.notificationChannel !== 'none' && !channels.some(channel => channel.id === state.draft.notificationChannel)
+                  ? e('option', { value: state.draft.notificationChannel }, state.draft.notificationChannel + t('channelUnavailable')) : null),
+              !channels.length ? e('p', { className: 'dcc-help' }, t('noConfiguredChannel')) : null) : null),
         ) : null,
         state.snapshot?.error ? e('p', { className: 'dcc-notice dcc-error', role: 'alert' }, t('invalid'), ' ', state.snapshot.error.message) : null,
         state.external ? e('p', { className: 'dcc-notice dcc-error', role: 'alert' }, t('external')) : null,

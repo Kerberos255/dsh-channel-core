@@ -30,3 +30,9 @@ See Git commit history for exact release-to-release changes. Live Feishu/Discord
 
 - Discord now registers independent slash commands; Feishu adds safe `/model`, provider-only shorthand, and `/think`.
 - Channel authorization and shared-session ownership are preserved.
+
+## 0.4.62 (2026-10-16)
+
+- Add optional task notifications, verified-owner DM routing, and stable-current-binding resolution; preserve Dream as a standalone plugin.
+- Sync verified native owner `/status` dashboard integrations for Discord and Feishu, including their authorization and transport tests.
+- Keep notifications disabled by default; live platform acceptance still requires an opt-in end-to-end test.

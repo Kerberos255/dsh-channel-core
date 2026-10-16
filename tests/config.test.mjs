@@ -36,6 +36,10 @@ test('complete validation rejects typos, coercion, unknown versions and malforme
     assert.throws(() => validateConfig(value), { name: 'CoreError' });
   }
   assert.deepEqual(validateConfig({ defaultMode: 'queue' }), { ...DEFAULT_CONFIG, defaultMode: 'queue' });
+  for (const value of [{taskNotifications:'true'},{notificationChannel:'telegram'},{notificationChannel:null}])
+    assert.throws(() => validateConfig(value), { name: 'CoreError' });
+  assert.deepEqual(validateConfig({ taskNotifications: true, notificationChannel: 'none' }), { ...DEFAULT_CONFIG, taskNotifications: true });
+  assert.equal(validateConfig({ taskNotifications: true, notificationChannel: 'feishu' }).notificationChannel,'feishu');
 });
 
 test('revision prevents another page and manual edits from being overwritten', () => temporary(store => {

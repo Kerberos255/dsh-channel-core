@@ -1,5 +1,7 @@
 {
   "schemaVersion": 1,
   "defaultMode": "steering",
-  "sharedDM": true
+  "sharedDM": true,
+  "taskNotifications": false,
+  "notificationChannel": "none"
 }
