@@ -214,8 +214,102 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // Session-local, display-only news history. Never contributes to the
+    // native conversation transcript, agent inbox, summaries or memory.
+    function NewsArchiveView({ sessionId, connection }) {
+      const [state, setState] = React.useState({ records: [], hasMore: false, busy: false, error: '' });
+      const live = React.useRef(true);
+      const request = React.useCallback(async (before = null, cursorId = '', append = false) => {
+        setState(value => ({ ...value, busy: true, error: '' }));
+        try {
+          const response = await connection.rpc.call('/api', 'channelCore/outboundRecords',
+            { args: { sessionId, before, cursorId, limit: 30 } });
+          if (!response.ok) throw new Error(response.error?.message || '读取失败');
+          if (live.current) setState(previous => ({
+            records: append ? [...previous.records, ...response.value.records] : response.value.records,
+            hasMore: response.value.hasMore, busy: false, error: '',
+          }));
+        } catch (error) {
+          if (live.current) setState(value => ({ ...value, busy: false, error: error.message }));
+        }
+      }, [connection, sessionId]);
+      React.useEffect(() => {
+        live.current = true;
+        void request();
+        const refresh = () => { if (!document.hidden) void request(); };
+        window.addEventListener('focus', refresh);
+        const timer = setInterval(refresh, 30000);
+        return () => { live.current = false; clearInterval(timer); window.removeEventListener('focus', refresh); };
+      }, [request]);
+      const date = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—';
+      const stateName = { sent: '已发送', pending: '等待投递', sending: '发送中', uncertain: '状态待确认', failed: '发送失败' };
+      const oldest = state.records.at(-1);
+      return e('section', { className: 'dcc-news-archive', 'aria-label': '只读外发记录', style: {
+        boxSizing: 'border-box', width: 'min(100%,920px)', margin: '0 auto',
+        padding: '18px', color: 'var(--dsw-alias-label-primary)' } },
+        e('header', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 } },
+          e('div', { style: { flex: 1 } },
+            e('h3', { style: { margin: 0, fontSize: 16 } }, '📨 Session 外发记录'),
+            e('small', { style: { opacity: .7 } }, '飞书 / Discord · 主动外发 · 只读 · 不写入对话或记忆')),
+          e('button', { type: 'button', disabled: state.busy, onClick: () => void request() }, '刷新')),
+        state.error ? e('p', { role: 'alert' }, state.error) : null,
+        !state.records.length && !state.busy ? e('p', null, '当前 Session 尚无通过 Channel Core 主动发送的外发记录。') : null,
+        state.records.map(item => e('article', { key: item.id, style: {
+          border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 12,
+          padding: '14px', margin: '12px 0', background: 'var(--dsw-alias-bg-layer-1)' } },
+          e('div', { style: { display: 'flex', gap: 12, justifyContent: 'space-between', flexWrap: 'wrap' } },
+            e('strong', null, stateName[item.state] || item.state),
+            e('span', null, '投递时间：', date(item.sentAt))),
+          e('div', { style: { fontSize: 12, opacity: .8, marginTop: 6, overflowWrap: 'anywhere' } },
+            '记录时间：', date(item.createdAt),
+            '　平台消息 ID：', item.messageId || '—',
+            '　渠道：', item.provider, '　来源：', item.source, '　投递键：', item.idempotencyKey),
+          item.error ? e('p', { style: { fontSize: 12 } }, '状态说明：', item.error) : null,
+          e('pre', { style: {
+            whiteSpace: 'pre-wrap', wordBreak: 'break-word', font: 'inherit',
+            lineHeight: 1.65, margin: '12px 0 0', maxHeight: 720, overflow: 'auto' } }, item.text))),
+        state.hasMore ? e('button', { type: 'button', disabled: state.busy, onClick: () => {
+          if (oldest) void request(oldest.createdAt, oldest.id, true);
+        } }, state.busy ? '加载中…' : '加载更早的记录') : null);
+    }
+    function installNewsArchiveView(ctx) {
+      if (!ctx.sessions?.list?.getSnapshot || !ctx.sessions.list.subscribe) return () => {};
+      let allowed = new Set(), dispose = null, currentId = '', fetching = false, stopped = false;
+      const selected = () => Object.values(ctx.sessions.list.getSnapshot().byId || {})
+        .find(row => row.retainedBy?.mainView > 0)?.id || '';
+      const sync = () => {
+        const next = selected();
+        const expected = allowed.has(next) ? next : '';
+        if (currentId === expected) return;
+        if (dispose) { dispose(); dispose = null; }
+        currentId = expected;
+        if (expected) dispose = ctx.slots.register({
+          name: 'conversation.view', id: 'news-outbound-archive',
+          label: () => '外发记录', order: 7,
+        }, props => e(NewsArchiveView, { ...props, connection: ctx.connection }));
+      };
+      const refresh = async () => {
+        if (fetching || stopped) return;
+        fetching = true;
+        try {
+          const result = await ctx.connection.rpc.call('/api', 'channelCore/outboundSessions', { args: {} });
+          if (!stopped && result.ok && Array.isArray(result.value)) { allowed = new Set(result.value); sync(); }
+        } catch { /* disconnected UI: preserve the last confirmed session list */ }
+        finally { fetching = false; }
+      };
+      const off = ctx.sessions.list.subscribe(sync);
+      const focus = () => { if (!document.hidden) void refresh(); };
+      const timer = setInterval(focus, 15000);
+      window.addEventListener('focus', focus);
+      void refresh();
+      return () => {
+        stopped = true; off(); clearInterval(timer); window.removeEventListener('focus', focus);
+        if (dispose) dispose();
+      };
+    }
+
     return {
-      inject: ['slots', 'locale', 'connection', 'remote', 'remote.credentials'],
+      inject: ['slots', 'locale', 'connection', 'remote', 'remote.credentials', 'sessions'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, locales));
         ctx.effect(() => {
@@ -226,6 +320,7 @@ window.__ModuleLoader__.load({
         ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
           name: 'plugins.bundle.config', key: 'dsh-channel-core', locale: NS,
         }, ({ t, view }) => view === 'summary' ? t('summary') : e(ChannelBundlePage, { t, connection: ctx.connection, credentialApi: ctx.remote?.credentials })));
+        ctx.slots.inject('conversation.view', () => installNewsArchiveView(ctx));
       },
     };
   },

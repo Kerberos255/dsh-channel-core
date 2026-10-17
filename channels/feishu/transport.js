@@ -4,6 +4,7 @@ import { renderFooter } from '../discord/footer.js';
 import { createCardKitChannel, streamingCard } from './cardkit.js';
 import { installStatusMenu } from './menu-status.js';
 import { completedAskUserText } from '../../lib/answered-question.js';
+import { groupAllowlistFor } from '../../lib/channel-runtime.js';
 
 export function normalize(message,config){
   return {provider:'feishu',accountId:config.accountId,conversationId:message.chatId,userId:message.senderId,messageId:message.messageId,
@@ -153,7 +154,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
   }:undefined;
   const channel=sdk.createLarkChannel({appId:config.appId,appSecret:credentials[0],domain:config.domain==='lark'?sdk.Domain.Lark:sdk.Domain.Feishu,source:'dsh-channel-feishu',logger:silent,includeRawEvent:true,handshakeTimeoutMs:15000,
     ...(http?{httpInstance:http}:{}),
-    policy:{dmMode:config.ownerMode==='first-dm'||config.ownerMode==='manual'?'all':'allowlist',dmAllowlist:config.allowedUsers,groupAllowlist:config.allowGroups?config.allowedGroups:[],requireMention:config.requireMention,respondToMentionAll:false},
+    policy:{dmMode:config.ownerMode==='first-dm'||config.ownerMode==='manual'?'all':'allowlist',dmAllowlist:config.allowedUsers,groupAllowlist:groupAllowlistFor(config),requireMention:config.requireMention,respondToMentionAll:false},
     safety:{chatQueue:{enabled:false},batch:{text:{delayMs:0,longDelayMs:0},media:{delayMs:0}},staleMessageWindowMs:300000},outbound:{streamThrottleMs:config.throttleMs,textChunkLimit:6000,retry:{maxAttempts:1}}});
   installStatusMenu(channel,{onStatus:menuStatus,signal,state});
   const runtimeMetrics=new Map();

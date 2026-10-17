@@ -2,6 +2,23 @@
 
 This file holds historical behavior notes formerly embedded in README. For current setup and behavior, start with [README.md](README.md) or [简体中文](README.zh-CN.md).
 
+## 0.4.70 (2026-10-18)
+
+- Generalized proactive outbound archives from a Feishu news-only path to any Session-bound Feishu/Discord send using Channel Core's authorized outbound API.
+- Persisted exact text, delivery state, platform message ID and timestamps independently of the native conversation or Dream.
+- Added one model-facing read-only tool, `channel_outbound_records`, and a Session-scoped archive viewer. The temporary news-only model tool is not registered.
+- Added regressions for multiple sources, Discord, pagination, idempotency, authorization and source integrity; no local news tokens or bindings are published.
+
+## 0.4.66
+
+- **A collected group no longer kills the message that discovered it:** saving the collected chat id fired the settings subscription, which rebuilt the connection and aborted the in-flight signal, so `resolveSessionWorkspace` threw and the first message in a new group produced no session and no reply. Receive-scope edits (`allowedGroups` while auto-collection owns admission) now update the applied snapshot without reconnecting; every other field still rebuilds the connection.
+- **Receive scope is read per message:** the transport hands each message the current settings value, so policy edits apply immediately instead of waiting for a reconnect.
+
+## 0.4.65
+
+- **Feishu group auto-collection works with an existing allowlist:** the SDK policy gate dropped every group outside a non-empty `groupAllowlist` before `ChannelRuntime.receive()` could collect it. Feishu now hands the SDK an empty list while auto-collection owns admission, so a second group is remembered the first time the owner speaks in it.
+- **Owner-only widening:** auto-collection now requires the sender to be listed in `allowedUsers`; strangers in other groups never extend the allowlist. `requireMention` still gates whether a collected group needs an @.
+
 ## Earlier updates
 
 - **Single-package channels:** Discord and Feishu adapters moved into one Channel Core package with shared bridge and separate credentials, settings, and connection lifecycle.
