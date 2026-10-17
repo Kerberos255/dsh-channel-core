@@ -1,6 +1,6 @@
 {
   "name": "dsh-channel-core",
-  "version": "0.4.62",
+  "version": "0.4.63",
   "private": true,
   "type": "module",
   "description": "统一管理 Discord、飞书渠道、会话绑定、消息交付与进度卡片的单插件。",
@@ -46,16 +46,16 @@
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "4.0.4 || 4.0.5-alpha.1",
-    "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2 || 0.2.1-alpha.1",
-    "@deepseek-ai/dsh-client-connection": "0.2.0-rc.2 || 0.2.1-alpha.1",
-    "@deepseek-ai/dsh-client-locale": "0.2.0-rc.2 || 0.2.1-alpha.1",
-    "@deepseek-ai/dsh-client-ui-plugin-manager": "0.2.0-rc.2 || 0.2.1-alpha.1",
-    "@deepseek-ai/dsh-api-session-controller": "0.2.0-rc.2 || 0.2.1-alpha.1",
-    "@deepseek-ai/dsh-tools": "0.2.0-rc.2 || 0.2.1-alpha.1",
-    "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.2 || 0.2.1-alpha.1",
-    "@deepseek-ai/dsh-credentials": "0.2.0-rc.2 || 0.2.1-alpha.1",
-    "@deepseek-ai/dsh-client-file-upload": "0.2.0-rc.2 || 0.2.1-alpha.1"
+    "@deepseek-ai/cordis": "4.0.4 || 4.0.5-alpha.1 || 4.0.5",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-alpha.1 || >=0.2.1",
+    "@deepseek-ai/dsh-client-connection": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-alpha.1 || >=0.2.1",
+    "@deepseek-ai/dsh-client-locale": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-alpha.1 || >=0.2.1",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-alpha.1 || >=0.2.1",
+    "@deepseek-ai/dsh-api-session-controller": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-alpha.1 || >=0.2.1",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-alpha.1 || >=0.2.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-alpha.1 || >=0.2.1",
+    "@deepseek-ai/dsh-credentials": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-alpha.1 || >=0.2.1",
+    "@deepseek-ai/dsh-client-file-upload": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-alpha.1 || >=0.2.1"
   },
   "scripts": {
     "test": "node --test tests/answered-question.test.mjs tests/core.test.mjs tests/proactive-outbound.test.mjs tests/task-notifications.test.mjs tests/config.test.mjs tests/channel-model-portable.test.mjs tests/progress-lines.test.mjs tests/memory-access.test.mjs tests/discord-question-continuation.test.mjs channels/discord/tests/model-commands.test.mjs channels/discord/tests/final-format.test.mjs channels/discord/tests/tables.test.mjs",
@@ -63,11 +63,16 @@
     "test:integration": "node --test tests/*.test.mjs channels/discord/tests/*.test.mjs channels/feishu/tests/*.test.mjs"
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=24",
+    "dsh": ">=0.2.0-rc.2"
   },
   "dependencies": {
     "global-agent": "3.0.0",
     "discord.js": "14.27.0",
     "@larksuiteoapi/node-sdk": "1.74.0"
+  },
+  "dshCompatibility": {
+    "testedRuntime": "0.2.1-rc.2",
+    "policy": "warn"
   }
 }
