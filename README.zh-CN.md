@@ -14,6 +14,8 @@
 
 ## 主动消息投递
 
+**会话界面已精简**：不再额外添加无效的「外发记录」选项卡。通用外发归档仍可用 `channel_send` 的 `action=list/read` 只读检索。本机私有新闻桥会在飞书确认发送后，另外通过 DSH 原生 Session Controller 把已投递新闻同步为「飞书-新闻」的真实会话回合；不会直接修改日志文件，也不会为了补录而重复发送飞书。
+
 Channel Core 现支持**无需用户先发送消息的主动投递**。Agent 可以通过 `channel_send` 向自己原生 DSH Session **已经绑定、且当前授权有效**的飞书或 Discord 会话发送纯文本消息；定时任务、Dream 等可信插件也可调用 `ctx.channelCore.sendToBoundSession({ sessionId, text, idempotencyKey, bindingId?, source? })`，并通过 `outboundTargets(sessionId)` 查询可选的绑定 ID。
 
 - **发送权限：** 只能发到当前 Session 已绑定的渠道。多目标需要显式填写 `bindingId`；不能随意填写任意群号或收件人，也不能跨 Session 发消息。发送前重新核验群聊允许列表和私聊/主人权限。
