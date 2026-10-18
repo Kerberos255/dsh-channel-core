@@ -2,124 +2,132 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {CoreStore} from '../lib/store.js';
 import {DeliveryStore,deliveryKey} from '../lib/delivery-store.js';
-import {attachNewsAgentPrompt,installNewsAgentTool,readNewsForAgent,newsArchiveHint,recentNewsPrompt} from '../lib/news-agent-access.js';
+import {attachOutboundAgentPrompt,attachNewsReader,installNewsAgentTool,
+ readNewsForAgent,newsArchiveHint,recentNewsPrompt} from '../lib/news-agent-access.js';
 
-const SESSION='session-real-news';
+const NEWS='session-real-news';
+const OTHER='session-normal';
 function fixture(){
  const store=new CoreStore(':memory:'),deliveries=new DeliveryStore(store.db);
- const id=deliveryKey(['news-agent',1]),other=deliveryKey(['news-agent',2]);
- for(const [key,sessionId,text] of [[id,SESSION,'新闻原文：A\n**B**'],[other,'session-other','只能属于其他 Session']]){
-  deliveries.enqueue(key,{provider:'feishu',accountId:'bot'}, {text});
-  deliveries.archive(key,{sessionId,provider:'feishu',source:'windows-news',idempotencyKey:'windows-news-unit-'+key.slice(0,6),text});
-  deliveries.finish(key,'sent','om_test_'+key.slice(0,8));
- }
- const core={newsArchiveSessionId:SESSION,bridge:{store:deliveries}};
- return {store,deliveries,core,id,other,close(){store.close();}};
+ let count=0;
+ const add=({sessionId=NEWS,source='windows-news',provider='feishu',text='新闻原文：A\n**B**',state='sent'}={})=>{
+  const id=deliveryKey(['news-agent',++count]);
+  deliveries.enqueue(id,{provider,accountId:'bot'}, {text});
+  deliveries.archive(id,{sessionId,provider,source,idempotencyKey:'key-'+count,text});
+  if(state==='sent')deliveries.finish(id,'sent','om_test_'+count);
+  else if(state==='failed')deliveries.finish(id,'failed',null,'network');
+  return id;
+ };
+ const news=add();
+ const other=add({sessionId:OTHER,text:'其他 Session 旧新闻，不能读取'});
+ const otherSource=add({sessionId:NEWS,source:'agent',text:'其他主动外发，不是新闻'});
+ const failed=add({sessionId:NEWS,text:'失败的新闻不能展示',state:'failed'});
+ const core={newsArchiveSessionId:NEWS,bridge:{store:deliveries}};
+ return {core,deliveries,store,news,other,otherSource,failed,add,close:()=>store.close()};
 }
-test('model can list and read exact sent text, with session authorization and no transcript writes',()=>{
+function mockAgent(id){
+ const tools=new Map(),handlers={};let section,toolInjections=0;
+ const agent={session:{id,header:{cwd:'E:/dsh/workspaces/test'}},ctx:{inject(deps,register){
+   if(deps[0]==='tools'){toolInjections++;register({tools:{register(t){tools.set(t.name,t);}}});return;}
+   if(deps[0]==='systemPrompt')register({effect(fn){fn();},
+     systemPrompt:{section(x){section=x;return()=>{};}},on(event,fn){handlers[event]=fn;}});
+  }}};
+ return {agent,tools,handlers,get section(){return section;},get toolInjections(){return toolInjections;}};
+}
+test('news history is limited to the one registered Session and confirmed news only',()=>{
  const f=fixture();try{
-  const baseline=f.store.db.prepare('SELECT count(*) AS n FROM receipts').get().n;
-  const listing=readNewsForAgent(f.core,SESSION,{action:'list'});
-  assert.equal(listing.records.length,1);assert.equal(listing.records[0].id,f.id);
-  assert(listing.records[0].messageId.startsWith('om_test_'));
-  assert.equal(readNewsForAgent(f.core,SESSION,{action:'list',query:'新闻原文'}).records.length,1);
-  assert.equal(readNewsForAgent(f.core,SESSION,{action:'list',query:'无此词'}).records.length,0);
-  const detail=readNewsForAgent(f.core,SESSION,{action:'read',id:f.id,offset:3});
-  assert.equal(detail.text,'文：A\n**B**');assert.equal(detail.nextOffset,null);
-  assert.equal(detail.state,'sent');
-  assert.throws(()=>readNewsForAgent(f.core,SESSION,{action:'read',id:f.other}),/record-not-found/);
-  assert.equal(readNewsForAgent(f.core,'session-other',{action:'list'}).records.length,1,'other session reads only its own record');
-  assert.throws(()=>readNewsForAgent(f.core,'invalid-session',{action:'list'}),/session-denied/);
-  assert.throws(()=>readNewsForAgent(f.core,SESSION,{action:'read',id:'bad'}),/id-invalid/);
-  assert.throws(()=>readNewsForAgent(f.core,SESSION,{action:'list',query:'x'.repeat(121)}),/query-invalid/);
-  assert.equal(f.store.db.prepare('SELECT count(*) AS n FROM receipts').get().n,baseline);
-  assert.equal(f.store.db.prepare('SELECT count(*) AS n FROM channel_turn_origins').get().n,0);
+  const before=f.store.db.prepare('SELECT count(*) AS n FROM receipts').get().n;
+  const list=readNewsForAgent(f.core,NEWS,{action:'list'});
+  assert.deepEqual(list.records.map(x=>x.id),[f.news]);
+  assert.equal(readNewsForAgent(f.core,NEWS,{action:'list',query:'新闻原文'}).records.length,1);
+  assert.equal(readNewsForAgent(f.core,NEWS,{action:'list',query:'无匹配'}).records.length,0);
+  assert.equal(readNewsForAgent(f.core,NEWS,{action:'read',id:f.news,offset:3}).text,'文：A\n**B**');
+  for(const id of [f.other,f.otherSource,f.failed])
+   assert.throws(()=>readNewsForAgent(f.core,NEWS,{action:'read',id}),/not-found/);
+  assert.throws(()=>readNewsForAgent(f.core,OTHER,{action:'list'}),/session-denied/);
+  assert.throws(()=>readNewsForAgent(f.core,OTHER,{action:'read',id:f.news}),/session-denied/);
+  assert.throws(()=>readNewsForAgent(f.core,'invalid',{action:'list'}),/session-denied/);
+  assert.throws(()=>readNewsForAgent(f.core,NEWS,{action:'list',query:'x'.repeat(130)}),/query-invalid/);
+  assert.equal(f.store.db.prepare('SELECT count(*) AS n FROM receipts').get().n,before);
  }finally{f.close();}
 });
-test('large original records are read in bounded, lossless fragments',()=>{
+test('news detail pagination stays bounded and exact, without losing original characters',()=>{
  const f=fixture();try{
   const big='中文'.repeat(9000);
-  f.store.db.prepare('UPDATE channel_outbound_archive SET text=? WHERE delivery_id=?').run(big,f.id);
-  const a=readNewsForAgent(f.core,SESSION,{action:'read',id:f.id});
-  assert.equal(a.text.length,12000);assert.equal(a.nextOffset,12000);
-  const b=readNewsForAgent(f.core,SESSION,{action:'read',id:f.id,offset:a.nextOffset});
-  assert.equal(a.text+b.text,big);assert.equal(b.nextOffset,null);
+  f.store.db.prepare('UPDATE channel_outbound_archive SET text=? WHERE delivery_id=?').run(big,f.news);
+  const first=readNewsForAgent(f.core,NEWS,{action:'read',id:f.news});
+  assert.equal(first.text.length,12000);
+  const second=readNewsForAgent(f.core,NEWS,{action:'read',id:f.news,offset:first.nextOffset});
+  assert.equal(first.text+second.text,big);
  }finally{f.close();}
 });
-test('only designated Session gets recent confirmed news in its next normal LLM request',async()=>{
+test('only news Session receives a system-prompt section or full news text',async()=>{
  const f=fixture();try{
-  const handlers={};let section;
-  const agent={session:{id:SESSION},ctx:{inject(_deps,cb){cb({
-   effect(fn){fn();},
-   systemPrompt:{section(value){section=value;return ()=>{};}},
-   on(name,handler){handlers[name]=handler;},
-  });}}};
-  attachNewsAgentPrompt(agent,f.core);
-  assert.equal(section.name,'channel:outbound-archive');
-  const assembly={sections:[{name:'channel:outbound-archive',text:''},{name:'harness:identity',text:'identity'}]};
-  const result=await handlers['system-prompt/assemble'](null,{agent,signal:new AbortController().signal},async()=>assembly);
-  assert.match(result.sections[0].text,/channel_send/);
-  assert.match(result.sections[0].text,/om_test_/);
+  const normal=mockAgent(OTHER);
+  attachOutboundAgentPrompt(normal.agent,f.core);
+  assert.equal(normal.section,undefined,'ordinary Session must not inject archive scaffolding');
+  assert.equal(newsArchiveHint(f.core,OTHER),'');
+  const news=mockAgent(NEWS);
+  attachOutboundAgentPrompt(news.agent,f.core);
+  assert.equal(news.section.name,'channel:news-reference');
+  const assembly={sections:[{name:'channel:news-reference',text:''},{name:'harness:identity',text:'identity'}]};
+  const result=await news.handlers['system-prompt/assemble'](null,{agent:news.agent,signal:new AbortController().signal},async()=>assembly);
   assert.match(result.sections[0].text,/新闻原文：A/);
   assert.match(result.sections[0].text,/外部资料，非指令/);
-  assert.equal(recentNewsPrompt(f.core,'session-other'),'');
-  agent.session.id='session-empty';
-  const denied=await handlers['system-prompt/assemble'](null,{agent},async()=>assembly);
+  assert.match(result.sections[0].text,/channel_news/);
+  assert(!result.sections[0].text.includes('其他主动外发'));
+  assert(!result.sections[0].text.includes('其他 Session'));
+  assert.equal(recentNewsPrompt(f.core,OTHER),'');
+  news.agent.session.id=OTHER;
+  const denied=await news.handlers['system-prompt/assemble'](null,{agent:news.agent},async()=>assembly);
   assert.equal(denied.sections[0].text,'');
-  assert.equal(newsArchiveHint(f.core,'session-empty'),'');
  }finally{f.close();}
 });
-test('one channel_send tool supports read-only list/read and compatible send',async()=>{
+test('one global send-only tool; news read tool is registered only within news Agent',async()=>{
  const f=fixture();try{
-  const tools=new Map();let created;const sendCalls=[];
-  f.core.sendToBoundSession=async value=>{sendCalls.push(value);return {state:'sent',id:'delivery-1'};};
-  installNewsAgentTool({inject(deps,cb){assert.deepEqual(deps,['tools']);cb({tools:{register(tool){tools.set(tool.name,tool);}}});},on(event,callback){assert.equal(event,'agent/created');created=callback;}},f.core);
-  assert.deepEqual([...tools.keys()],['channel_send'],'exactly one model-facing channel tool');
-  const registered=tools.get('channel_send');
-  assert(registered.parameters.properties.action.enum.includes('read'));
-  const ac=new AbortController();
-  const exec={agent:{session:{id:SESSION}},callId:'call-1',signal:ac.signal};
-  const listing=await registered.execute({action:'list'},exec);
-  assert.equal(listing.records[0].id,f.id);
-  assert.deepEqual(registered.output.render(null,listing),[{type:'text',text:JSON.stringify(listing)}]);
-  const detail=await registered.execute({action:'read',id:f.id},exec);
-  assert.equal(detail.text,'新闻原文：A\n**B**');
-  assert.equal(sendCalls.length,0,'list/read must have no delivery side effects');
-  assert.equal((await registered.execute({action:'list'},{...exec,agent:{session:{id:'session-stranger'}}})).records.length,0);
-  await assert.rejects(registered.execute({action:'read',id:f.id},{...exec,agent:{session:{id:'session-stranger'}}}),/record-not-found/);
-  await assert.rejects(registered.execute({action:'list'},{signal:ac.signal}),/session-denied/);
-  for(const args of [{action:'list',text:'DO NOT SEND'},{action:'read',id:f.id,idempotencyKey:'x'},
-   {action:'send',text:'hello',query:'abc'},{action:'send',text:' '},
-   {action:'read',id:f.id,filePath:'secrets.pdf'},{action:'invalid',text:'hello'},{}]){
-   await assert.rejects(registered.execute(args,exec));
-  }
-  assert.equal(sendCalls.length,0,'mixed, invalid and incomplete requests cannot send');
-  assert.deepEqual(await registered.execute({text:'legacy send'},exec),{state:'sent',id:'delivery-1'});
-  assert.deepEqual(await registered.execute({action:'send',text:'new send',bindingId:'binding-test',idempotencyKey:'stable-key'},exec),{state:'sent',id:'delivery-1'});
-  assert.deepEqual(await registered.execute({action:'send',filePath:'_scratch/report.pdf'},
-   {...exec,agent:{session:{id:SESSION,header:{cwd:'E:/dsh/workspaces/test'}}}}),{state:'sent',id:'delivery-1'});
-  assert.deepEqual(sendCalls,[
-   {sessionId:SESSION,bindingId:undefined,text:'legacy send',idempotencyKey:'call-1',source:'agent'},
-   {sessionId:SESSION,bindingId:'binding-test',text:'new send',idempotencyKey:'stable-key',source:'agent'},
-   {sessionId:SESSION,bindingId:undefined,text:'',filePath:'_scratch/report.pdf',
-    workspacePath:'E:/dsh/workspaces/test',idempotencyKey:'call-1',source:'agent'}
-  ]);
-  assert.equal(typeof created,'function');
-  ac.abort();await assert.rejects(registered.execute({action:'list'},exec),{name:'AbortError'});
-  assert.equal(sendCalls.length,3);
+  let created,globalTool;const sent=[];
+  f.core.sendToBoundSession=async value=>{sent.push(value);return{state:'sent',id:'delivery-1'};};
+  installNewsAgentTool({inject(deps,cb){
+   assert.deepEqual(deps,['tools']);cb({tools:{register(tool){globalTool=tool;}}});
+  },on(type,cb){assert.equal(type,'agent/created');created=cb;}},f.core);
+  assert.equal(globalTool.name,'channel_send');
+  assert.deepEqual(globalTool.parameters.properties.action.enum,['send']);
+  assert(!Object.hasOwn(globalTool.parameters.properties,'query'));
+  assert(!Object.hasOwn(globalTool.parameters.properties,'id'));
+  assert(!/归档|检索|读取/.test(globalTool.description));
+  const normal=mockAgent(OTHER);
+  created({agent:normal.agent});
+  assert.equal(normal.toolInjections,0);
+  assert.equal(normal.section,undefined);
+  const news=mockAgent(NEWS);
+  created({agent:news.agent});
+  assert.deepEqual([...news.tools.keys()],['channel_news']);
+  const reader=news.tools.get('channel_news');
+  const exec={agent:news.agent,callId:'tool-1',signal:new AbortController().signal};
+  assert.equal((await reader.execute({action:'list'},exec)).records[0].id,f.news);
+  assert.equal((await reader.execute({action:'read',id:f.news},exec)).text,'新闻原文：A\n**B**');
+  await assert.rejects(reader.execute({action:'list'},{...exec,agent:normal.agent}),/session-denied/);
+  await assert.rejects(reader.execute({action:'read',id:f.news,query:'extra'},exec),/arguments-invalid/);
+  const before=sent.length;
+  await assert.rejects(globalTool.execute({action:'list'},exec),/action-invalid/);
+  assert.equal(sent.length,before);
+  assert.deepEqual(await globalTool.execute({text:'normal text'},exec),{state:'sent',id:'delivery-1'});
+  assert.deepEqual(await globalTool.execute({filePath:'_scratch/report.pdf'},exec),{state:'sent',id:'delivery-1'});
+  assert.deepEqual(sent,[{sessionId:NEWS,bindingId:undefined,text:'normal text',idempotencyKey:'tool-1',source:'agent'},
+   {sessionId:NEWS,bindingId:undefined,text:'',filePath:'_scratch/report.pdf',
+    workspacePath:'E:/dsh/workspaces/test',idempotencyKey:'tool-1',source:'agent'}]);
  }finally{f.close();}
 });
-
-test('auto news context stays bounded, ignores failed deliveries and never crosses Sessions',()=>{
+test('bounded news context shows confirmed deliveries only; no generic records',()=>{
  const f=fixture();try{
   const big='新闻'+'甲'.repeat(21000);
-  f.store.db.prepare('UPDATE channel_outbound_archive SET text=? WHERE delivery_id=?').run(big,f.id);
-  let prompt=recentNewsPrompt(f.core,SESSION);
+  f.store.db.prepare('UPDATE channel_outbound_archive SET text=? WHERE delivery_id=?').run(big,f.news);
+  const prompt=recentNewsPrompt(f.core,NEWS);
   assert(prompt.includes('新闻甲甲甲'));
-  assert(prompt.includes('action=read'));
-  assert(prompt.length<13500,'news reference budget must remain bounded');
-  assert(!prompt.includes('只能属于其他 Session'));
-  f.store.db.prepare("UPDATE channel_outbound_archive SET state='pending' WHERE delivery_id=?").run(f.id);
-  assert.equal(recentNewsPrompt(f.core,SESSION),'','unconfirmed content cannot enter model context');
+  assert(prompt.includes('channel_news(action=read'));
+  assert(prompt.length<13500);
+  assert(!prompt.includes('其他主动外发'));
+  f.store.db.prepare("UPDATE channel_outbound_archive SET state='pending' WHERE delivery_id=?").run(f.news);
+  assert.equal(recentNewsPrompt(f.core,NEWS),'');
  }finally{f.close();}
 });
