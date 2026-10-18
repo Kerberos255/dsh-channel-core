@@ -5,6 +5,7 @@ import { createCardKitChannel, streamingCard } from './cardkit.js';
 import { installStatusMenu } from './menu-status.js';
 import { completedAskUserText } from '../../lib/answered-question.js';
 import { groupAllowlistFor } from '../../lib/channel-runtime.js';
+import { verifyQueuedImage } from '../../lib/outbound-image.js';
 
 export function normalize(message,config){
   return {provider:'feishu',accountId:config.accountId,conversationId:message.chatId,userId:message.senderId,messageId:message.messageId,
@@ -144,6 +145,26 @@ export function finalCards(body,options){
     parts=next;
   }
 }
+/**
+ * CardKit finalization is an in-place edit, never a new IM message. If the
+ * settings or update call fails, retry once with a new monotonically increasing
+ * sequence; this cannot duplicate a message in the chat.
+ */
+export async function finalizeCardKitMessage(kitApi,record,payload){
+ try{
+  await kitApi.close(record);
+  await kitApi.update(record,payload);
+ }catch(first){
+  try{
+   await kitApi.update(record,payload);
+   record.streaming=false;
+  }catch(second){
+   const error=new Error('feishu-cardkit-final-update-failed',{cause:second});
+   error.code=second?.code??first?.code??'feishu-cardkit-final-update-failed';
+   throw error;
+  }
+ }
+}
 export async function createTransport({config,credentials,signal,receive,state,action,host,menuStatus},sdkOverride){
   const sdk=sdkOverride??await import('@larksuiteoapi/node-sdk');
   const silent=Object.fromEntries(['error','warn','info','debug','trace'].map(name=>[name,()=>{}]));
@@ -272,8 +293,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
         if(record.structural!==structure)await kitApi.update(record,next);
         else await kitApi.text(record,next.body.elements[0].content);
       }else{
-        await kitApi.close(record);
-        await kitApi.update(record,payload);
+        await finalizeCardKitMessage(kitApi,record,payload);
         kitRecords.delete(id);
       }
       presented.set(id,signature);
@@ -321,6 +341,12 @@ export async function createTransport({config,credentials,signal,receive,state,a
     close,
     progress:config.streaming.mode!=='off'?(origin,body)=>present(origin,body,[],config.streaming):undefined,
     async send(origin,body){
+      if(body.imagePath){
+        const file=verifyQueuedImage(body);
+        // The Channel SDK uploads media first and sends a native image message.
+        // No draft/card message is created for a proactive image.
+        return channel.send(origin.conversationId,{image:{source:file}},sendOptions(origin));
+      }
       if(body.feishuStatusCard){
         if(body.feishuStatusCard.schema!=='2.0'||!withinBudget(body.feishuStatusCard))
           throw new Error('feishu-status-card-invalid');

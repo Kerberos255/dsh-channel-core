@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { CoreStore } from '../lib/store.js';
 import { ChannelBridge } from '../lib/bridge.js';
 import { ProactiveOutbound, renderProactiveToolResult } from '../lib/proactive-outbound.js';
-import { routeKeys } from '../lib/routing.js';
+import { routeKeys } from '../lib/routing.js';import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 
 const sessionId='session-proactive-test';
 const scope={workspaceId:'w',presetId:'agent',memoryNamespace:'private',scheduleNamespace:'private',identityId:'i'};
@@ -122,4 +125,36 @@ test('claimed owner can receive a proactive DM without a separate user allowlist
   const ok=await f.outbound.send({sessionId,text:'owner notice',idempotencyKey:'owner-1'});
   assert.equal(ok.state,'sent');assert.equal(f.sent.length,1);
  }finally{await f.close()}
+});
+
+test('Feishu image outbound sends only a validated workspace image and reuses the same durable key',async()=>{
+ const f=fixture(),root=mkdtempSync(path.join(os.tmpdir(),'dsh-outbound-picture-'));
+ try{
+  mkdirSync(path.join(root,'_scratch'));
+  const imagePath=path.join(root,'_scratch','picture.png');
+  writeFileSync(imagePath,Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/afcAAAAASUVORK5CYII=','base64'));
+  f.bind();f.online();
+  const req={sessionId,imagePath,workspacePath:root,idempotencyKey:'image-test'};
+  const sent=await f.outbound.send(req);
+  assert.equal(sent.state,'sent');assert.equal(sent.contentType,'image');
+  assert.equal(f.sent.length,1);
+  assert.equal(f.sent[0].body.imagePath,imagePath);
+  assert.equal(f.sent[0].body.imageDigest.length,64);
+  assert.equal((await f.outbound.send(req)).state,'sent');
+  assert.equal(f.sent.length,1,'same idempotency key must not upload again');
+  const archived=f.bridge.store.db.prepare('SELECT text FROM channel_outbound_archive WHERE delivery_id=?').get(sent.id);
+  assert.equal(archived.text,'[图片] picture.png');
+  const outside=path.resolve(root,'..','image-outside.png');
+  await assert.rejects(f.outbound.send({...req,imagePath:outside,idempotencyKey:'another'}));
+  assert.equal(f.sent.length,1);
+ }finally{await f.close();rmSync(root,{recursive:true,force:true})}
+});
+test('image sending is blocked before queuing if the bound provider is not Feishu',async()=>{
+ const f=fixture(),root=mkdtempSync(path.join(os.tmpdir(),'dsh-outbound-picture-'));
+ try{
+  const file=path.join(root,'image.png');writeFileSync(file,Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/afcAAAAASUVORK5CYII=','base64'));
+  f.bind({provider:'discord'});f.online('discord');
+  await assert.rejects(f.outbound.send({sessionId,imagePath:file,workspacePath:root,idempotencyKey:'image-discord'}),{code:'outbound-image-provider-unsupported'});
+  assert.equal(f.sent.length,0);
+ }finally{await f.close();rmSync(root,{recursive:true,force:true})}
 });

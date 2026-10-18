@@ -71,6 +71,12 @@ Profile 名称按实际环境替换。首次安装或更新代码后重启 DSH�
 
 Dream 等插件不依赖 Channel Core，任务先持久记录失败，再选择性发布 `dsh/task-alert` 事件。仅自动任务第一次进入 `failed` 状态时通知；手动整理、正常完成和无新材料不通知。通知不包含原始会话、日记正文或模型错误细节，未安装 Channel Core 时 Dream 仍独立工作。
 
+## 飞书图片发送与进度收尾
+
+`channel_send(action=send,imagePath=...)` 现在可通过已授权的飞书 Session 绑定发送真正的图片消息。支持当前 DSH 工作区内、最大 10 MiB 的 PNG/JPG/GIF/WebP 文件，发送前校验真实文件类型、路径和 SHA-256；由飞书 SDK 上传后发送。**只在最终答复中写 `![图片](本地路径)` 并不等于发送。** 保留同一投递键的幂等约束。
+
+飞书 CardKit 最终回复的关闭或更新偶发失败时，在**同一张消息卡**上重试一次，不发送重复的新消息。无法确认结果时保留 `uncertain` 并通过 `channel.final-delivered` / `channel.final-delivery-failed` 记录诊断，以便定位界面停留在「执行中」的问题。
+
 ## Session 级只读外发归档
 
 通过 Channel Core 的 `channel_send` 或 `sendToBoundSession` 主动投递到飞书、Discord 的消息（例如新闻、定时报告、任务异常提醒）会在外发前独立归档原文、来源、发送状态、时间和平台消息 ID。当前 Session 的模型可使用统一的 `channel_send(action=list/read)` 检索、分页与读取（查询完全只读）；其它 Session 无权查看。普通 Session 仅在模型提示词里看到少量元数据；只有已绑定的「飞书-新闻」Session 会在下一次正常模型请求中自动获得最近最多 3 期已确认新闻原文、合计至多 12000 字，其他/更早内容仍由 `channel_send` 按需读取。资料明确标记为外部参考、非用户指令；这不会在新闻发送时额外触发模型。读取不会重新发送消息或将外发内容伪装为用户消息，也不会直接成为 Dream 的输入。普通对话回复、绕过 Channel Core 的发送以及升级前的旧消息不自动补录。

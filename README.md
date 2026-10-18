@@ -70,6 +70,12 @@ Channel Core's **General & Sessions → Task notifications** option is off by de
 
 Other plugins remain independent: they can optionally emit `dsh/task-alert` with a trusted task identifier, task kind, source and terminal state after persisting the failure. Channel Core handles selection, authorization, and delivery. Dream emits this event only on a scheduled workflow's first transition to `failed`; manual runs and successful/empty runs remain silent. Payloads exclude private conversation text, model errors and memory artifacts. No channel plugin is required to run Dream.
 
+## Sending images to Feishu
+
+The Session-scoped `channel_send` model tool supports `{action:"send",imagePath:"..."}` for a **real outbound Feishu image**. The image must be a PNG/JPEG/GIF/WebP inside the current DSH workspace, at most 10 MiB. The adapter validates canonical paths, file magic and SHA-256, then lets the Feishu SDK upload the media and send a native image message; a Markdown `![image](local-path)` reference alone does **not** send a picture. Existing Session binding authorization and durable idempotency continue to apply.
+
+Feishu CardKit final replies retry closing/updating **the same existing card** once when the initial terminal edit fails. The delivery ledger keeps ambiguous failures as `uncertain` rather than blindly sending a duplicate, and `channel.final-delivered` / `channel.final-delivery-failed` diagnostics make stuck progress easier to investigate.
+
 ## Session-scoped outbound archive
 
 **UI simplification:** The unused additional “Outbound records” conversation view has been removed. It no longer registers a separate Session renderer or needs Workspace / Conversation / Chat client providers. The existing `channel_send` model tool retains read-only `list` and `read` actions for archived outbound messages.
