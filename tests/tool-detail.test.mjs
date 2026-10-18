@@ -54,7 +54,9 @@ test('argument-less and array tools still say something useful', () => {
   assert.equal(toolDetail('job_list', {}), '');
   assert.equal(toolDetail('schedule_list', {}), '');
   assert.equal(toolDetail('memory_dream', { kind: 'daily' }), 'daily');
-  assert.equal(toolDetail('lcm_expand', { seq: 128 }), '事件 128');
+  assert.equal(toolDetail('lcm_recall', { action: 'expand', seq: 128 }), '展开 128');
+  assert.equal(toolDetail('lcm_recall', { action: 'search', query: '部署方式' }), '"部署方式"');
+  assert.equal(toolDetail('lcm_recall', { action: 'describe', id: 'node-A' }), '摘要 node-A');
   assert.equal(toolDetail('ask_user_question', { questions: [{ id: 'a' }] }), '1 个问题');
   assert.equal(toolDetail('send_message', { agent_id: '3f71' }), '子代理 3f71');
   assert.equal(toolDetail('present', { files: [{ path: 'a' }, { path: 'b' }] }), '2 个文件');
@@ -73,13 +75,13 @@ test('progress rows use Chinese labels for every tool family and keep unknown na
   const rows = renderProgressLines({ activity: { tools: [
     { name: 'browser_navigate', status: 'completed', detail: 'https://example.com/a' },
     { name: 'todo_write', status: 'completed', detail: '3 项' },
-    { name: 'lcm_grep', status: 'running', detail: '"部署方式"' },
+    { name: 'lcm_recall', status: 'running', detail: '"部署方式"' },
     { name: 'brand_new_tool', status: 'completed', detail: 'target' },
   ] } }, options);
   assert.deepEqual(rows, [
     '✅ 打开网页 · https://example.com/a',
     '✅ 更新计划 · 3 项',
-    '⏳ 上下文检索 · "部署方式"',
+    '⏳ 会话检索 · "部署方式"',
     '✅ brand_new_tool · target',
   ]);
 });

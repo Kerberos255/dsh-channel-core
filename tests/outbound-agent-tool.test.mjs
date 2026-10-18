@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {installOutboundAgentTool} from '../lib/news-agent-access.js';
+import {installOutboundAgentTool} from '../lib/outbound-agent-tool.js';
 
 const SESSION='session-news-or-normal';
 function registered(){

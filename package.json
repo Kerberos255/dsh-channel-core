@@ -1,6 +1,6 @@
 {
   "name": "dsh-channel-core",
-  "version": "0.4.82",
+  "version": "0.4.83",
   "private": true,
   "type": "module",
   "description": "统一管理 Discord、飞书渠道、会话绑定、消息交付与进度卡片的单插件。",
@@ -59,7 +59,7 @@
     "@deepseek-ai/dsh-client-file-upload": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-alpha.1 || >=0.2.1"
   },
   "scripts": {
-    "test": "node --test tests/feishu-file.test.mjs tests/feishu-image-final.test.mjs tests/client-outbound-view.test.mjs tests/news-archive.test.mjs tests/news-agent-access.test.mjs tests/answered-question.test.mjs tests/core.test.mjs tests/proactive-outbound.test.mjs tests/task-notifications.test.mjs tests/config.test.mjs tests/channel-model-portable.test.mjs tests/progress-lines.test.mjs tests/memory-access.test.mjs tests/discord-question-continuation.test.mjs channels/discord/tests/model-commands.test.mjs channels/discord/tests/final-format.test.mjs channels/discord/tests/tables.test.mjs",
+    "test": "node --test tests/*.test.mjs channels/discord/tests/*.test.mjs channels/feishu/tests/*.test.mjs",
     "test:host": "node --test tests/*.test.mjs channels/discord/tests/*.test.mjs channels/feishu/tests/*.test.mjs",
     "test:integration": "node --test tests/*.test.mjs channels/discord/tests/*.test.mjs channels/feishu/tests/*.test.mjs"
   },
