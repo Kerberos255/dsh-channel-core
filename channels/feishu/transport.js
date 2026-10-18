@@ -6,6 +6,7 @@ import { installStatusMenu } from './menu-status.js';
 import { completedAskUserText } from '../../lib/answered-question.js';
 import { groupAllowlistFor } from '../../lib/channel-runtime.js';
 import { verifyQueuedImage } from '../../lib/outbound-image.js';
+import { verifyQueuedFile } from '../../lib/outbound-file.js';
 
 export function normalize(message,config){
   return {provider:'feishu',accountId:config.accountId,conversationId:message.chatId,userId:message.senderId,messageId:message.messageId,
@@ -341,6 +342,10 @@ export async function createTransport({config,credentials,signal,receive,state,a
     close,
     progress:config.streaming.mode!=='off'?(origin,body)=>present(origin,body,[],config.streaming):undefined,
     async send(origin,body){
+      if(body.filePath){
+        const {filePath,fileName}=verifyQueuedFile(body);
+        return channel.send(origin.conversationId,{file:{source:filePath,fileName}},sendOptions(origin));
+      }
       if(body.imagePath){
         const file=verifyQueuedImage(body);
         // The Channel SDK uploads media first and sends a native image message.

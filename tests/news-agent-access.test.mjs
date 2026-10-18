@@ -89,19 +89,24 @@ test('one channel_send tool supports read-only list/read and compatible send',as
   await assert.rejects(registered.execute({action:'read',id:f.id},{...exec,agent:{session:{id:'session-stranger'}}}),/record-not-found/);
   await assert.rejects(registered.execute({action:'list'},{signal:ac.signal}),/session-denied/);
   for(const args of [{action:'list',text:'DO NOT SEND'},{action:'read',id:f.id,idempotencyKey:'x'},
-   {action:'send',text:'hello',query:'abc'},{action:'send',text:' '},{action:'invalid',text:'hello'},{}]){
+   {action:'send',text:'hello',query:'abc'},{action:'send',text:' '},
+   {action:'read',id:f.id,filePath:'secrets.pdf'},{action:'invalid',text:'hello'},{}]){
    await assert.rejects(registered.execute(args,exec));
   }
   assert.equal(sendCalls.length,0,'mixed, invalid and incomplete requests cannot send');
   assert.deepEqual(await registered.execute({text:'legacy send'},exec),{state:'sent',id:'delivery-1'});
   assert.deepEqual(await registered.execute({action:'send',text:'new send',bindingId:'binding-test',idempotencyKey:'stable-key'},exec),{state:'sent',id:'delivery-1'});
+  assert.deepEqual(await registered.execute({action:'send',filePath:'_scratch/report.pdf'},
+   {...exec,agent:{session:{id:SESSION,header:{cwd:'E:/dsh/workspaces/test'}}}}),{state:'sent',id:'delivery-1'});
   assert.deepEqual(sendCalls,[
    {sessionId:SESSION,bindingId:undefined,text:'legacy send',idempotencyKey:'call-1',source:'agent'},
-   {sessionId:SESSION,bindingId:'binding-test',text:'new send',idempotencyKey:'stable-key',source:'agent'}
+   {sessionId:SESSION,bindingId:'binding-test',text:'new send',idempotencyKey:'stable-key',source:'agent'},
+   {sessionId:SESSION,bindingId:undefined,text:'',filePath:'_scratch/report.pdf',
+    workspacePath:'E:/dsh/workspaces/test',idempotencyKey:'call-1',source:'agent'}
   ]);
   assert.equal(typeof created,'function');
   ac.abort();await assert.rejects(registered.execute({action:'list'},exec),{name:'AbortError'});
-  assert.equal(sendCalls.length,2);
+  assert.equal(sendCalls.length,3);
  }finally{f.close();}
 });
 

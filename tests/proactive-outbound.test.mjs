@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { CoreStore } from '../lib/store.js';
 import { ChannelBridge } from '../lib/bridge.js';
 import { ProactiveOutbound, renderProactiveToolResult } from '../lib/proactive-outbound.js';
-import { routeKeys } from '../lib/routing.js';import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+import { routeKeys } from '../lib/routing.js';
+import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -157,4 +158,38 @@ test('image sending is blocked before queuing if the bound provider is not Feish
   await assert.rejects(f.outbound.send({sessionId,imagePath:file,workspacePath:root,idempotencyKey:'image-discord'}),{code:'outbound-image-provider-unsupported'});
   assert.equal(f.sent.length,0);
  }finally{await f.close();rmSync(root,{recursive:true,force:true})}
+});
+
+test('file send uses the same durable outbound ledger and idempotency as images',async()=>{
+ const f=fixture(),root=mkdtempSync(path.join(os.tmpdir(),'dsh-file-'));
+ try{
+  const filePath=path.join(root,'test-report.pdf');
+  writeFileSync(filePath,Buffer.from('%PDF-1.7\n1 0 obj\nendobj\n%%EOF'));
+  f.bind();f.online();
+  const req={sessionId,filePath,workspacePath:root,idempotencyKey:'report-20261018'};
+  const first=await f.outbound.send(req);
+  assert.equal(first.state,'sent');assert.equal(first.contentType,'file');assert.equal(first.fileName,'test-report.pdf');
+  assert.equal(f.sent.length,1);
+  assert.equal(f.sent[0].body.filePath,filePath);
+  assert.equal(f.sent[0].body.fileDigest.length,64);
+  assert.equal((await f.outbound.send(req)).state,'sent');
+  assert.equal(f.sent.length,1);
+  const archived=f.bridge.store.db.prepare('SELECT text FROM channel_outbound_archive WHERE delivery_id=?').get(first.id);
+  assert.equal(archived.text,'[文件] test-report.pdf');
+  writeFileSync(filePath,Buffer.from('%PDF-1.7\n2 0 obj\nendobj\n%%EOF'));
+  await assert.rejects(f.outbound.send(req),{code:'outbound-idempotency-conflict'});
+  assert.equal(f.sent.length,1);
+ }finally{await f.close();rmSync(root,{recursive:true,force:true});}
+});
+test('ordinary file send rejects unauthorized Discord targets, mixed attachments and file captions',async()=>{
+ const f=fixture(),root=mkdtempSync(path.join(os.tmpdir(),'dsh-file-'));
+ try{
+  const filePath=path.join(root,'report.pdf');
+  writeFileSync(filePath,Buffer.from('%PDF-1.4\nendobj\n%%EOF'));
+  f.bind({provider:'discord'});f.online('discord');
+  await assert.rejects(f.outbound.send({sessionId,filePath,workspacePath:root,idempotencyKey:'one'}),{code:'outbound-file-provider-unsupported'});
+  await assert.rejects(f.outbound.send({sessionId,filePath,imagePath:filePath,workspacePath:root,idempotencyKey:'two'}),{code:'outbound-media-ambiguous'});
+  await assert.rejects(f.outbound.send({sessionId,filePath,workspacePath:root,text:'Here is the file',idempotencyKey:'three'}),{code:'outbound-file-caption-unsupported'});
+  assert.equal(f.sent.length,0);
+ }finally{await f.close();rmSync(root,{recursive:true,force:true});}
 });

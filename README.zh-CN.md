@@ -71,6 +71,12 @@ Profile 名称按实际环境替换。首次安装或更新代码后重启 DSH�
 
 Dream 等插件不依赖 Channel Core，任务先持久记录失败，再选择性发布 `dsh/task-alert` 事件。仅自动任务第一次进入 `failed` 状态时通知；手动整理、正常完成和无新材料不通知。通知不包含原始会话、日记正文或模型错误细节，未安装 Channel Core 时 Dream 仍独立工作。
 
+## 飞书普通文件发送
+
+`channel_send(action=send,filePath=...)` 可通过已授权的飞书会话发送真正的可下载文件附件，支持 PDF、Word、Excel、PPT、ZIP、7z、RAR、TXT、CSV、Markdown、JSON 等常见文件（单文件最大 **30 MB**）；图片仍由 `imagePath` 发送。
+
+文件必须属于当前 Session 的工作区，发送前和投递时检查规范化路径、内容签名及 SHA-256，继续沿用现有幂等防重、会话绑定和不确定投递保护。每次调用发送一个文件；原生文件消息没有文字说明字段，如需说明请另外发送一条文字消息。只输出本地路径不等于已经发出附件。
+
 ## 飞书图片发送与进度收尾
 
 `channel_send(action=send,imagePath=...)` 现在可通过已授权的飞书 Session 绑定发送真正的图片消息。支持当前 DSH 工作区内、最大 10 MiB 的 PNG/JPG/GIF/WebP 文件，发送前校验真实文件类型、路径和 SHA-256；由飞书 SDK 上传后发送。**只在最终答复中写 `![图片](本地路径)` 并不等于发送。** 保留同一投递键的幂等约束。
