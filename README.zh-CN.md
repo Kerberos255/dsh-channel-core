@@ -14,7 +14,7 @@
 
 ## 主动消息投递
 
-**会话界面已精简**：不再额外添加无效的「外发记录」选项卡。通用外发归档仍可用 `channel_send` 的 `action=list/read` 只读检索。本机私有新闻桥会在飞书确认发送后，通过 DSH 实验性 `appendPluginRecord` 接口把新闻保存为原生会话的可忽略插件记录，使用聊天节点显示在正常时间线，不伪造用户或助手回合、不触发第二次 LLM，也不直接修改压缩日志文件。
+**会话界面已精简**：不再另开「外发记录」选项卡，也不注册新闻查询工具。主动消息由 `channel_send` 发送；需要保留模型可见的定时消息时，使用 DSH 原生 Schedule 在目标 Session 执行正常回合。
 
 Channel Core 现支持**无需用户先发送消息的主动投递**。Agent 可以通过 `channel_send` 向自己原生 DSH Session **已经绑定、且当前授权有效**的飞书或 Discord 会话发送纯文本消息；定时任务、Dream 等可信插件也可调用 `ctx.channelCore.sendToBoundSession({ sessionId, text, idempotencyKey, bindingId?, source? })`，并通过 `outboundTargets(sessionId)` 查询可选的绑定 ID。
 
@@ -73,22 +73,18 @@ Dream 等插件不依赖 Channel Core，任务先持久记录失败，再选择�
 
 ## 飞书普通文件发送
 
-`channel_send(action=send,filePath=...)` 可通过已授权的飞书会话发送真正的可下载文件附件，支持 PDF、Word、Excel、PPT、ZIP、7z、RAR、TXT、CSV、Markdown、JSON 等常见文件（单文件最大 **30 MB**）；图片仍由 `imagePath` 发送。
+`channel_send(filePath=...)` 可通过已授权的飞书会话发送真正的可下载文件附件，支持 PDF、Word、Excel、PPT、ZIP、7z、RAR、TXT、CSV、Markdown、JSON 等常见文件（单文件最大 **30 MB**）；图片仍由 `imagePath` 发送。
 
 文件必须属于当前 Session 的工作区，发送前和投递时检查规范化路径、内容签名及 SHA-256，继续沿用现有幂等防重、会话绑定和不确定投递保护。每次调用发送一个文件；原生文件消息没有文字说明字段，如需说明请另外发送一条文字消息。只输出本地路径不等于已经发出附件。
 
 ## 飞书图片发送与进度收尾
 
-`channel_send(action=send,imagePath=...)` 现在可通过已授权的飞书 Session 绑定发送真正的图片消息。支持当前 DSH 工作区内、最大 10 MiB 的 PNG/JPG/GIF/WebP 文件，发送前校验真实文件类型、路径和 SHA-256；由飞书 SDK 上传后发送。**只在最终答复中写 `![图片](本地路径)` 并不等于发送。** 保留同一投递键的幂等约束。
+`channel_send(imagePath=...)` 现在可通过已授权的飞书 Session 绑定发送真正的图片消息。支持当前 DSH 工作区内、最大 10 MiB 的 PNG/JPG/GIF/WebP 文件，发送前校验真实文件类型、路径和 SHA-256；由飞书 SDK 上传后发送。**只在最终答复中写 `![图片](本地路径)` 并不等于发送。** 保留同一投递键的幂等约束。
 
 飞书 CardKit 最终回复的关闭或更新偶发失败时，在**同一张消息卡**上重试一次，不发送重复的新消息。无法确认结果时保留 `uncertain` 并通过 `channel.final-delivered` / `channel.final-delivery-failed` 记录诊断，以便定位界面停留在「执行中」的问题。
 
-## 新闻仅保留在原生「飞书-新闻」Session
+## 原生 Session 定时任务与外发
 
-原 Windows 计划任务继续触发 DSH 新闻桥；飞书确认投递成功后，仅在指定的「飞书-新闻」原生 Session 中记录可见但不触发模型的插件事件。不会创建额外聊天 Session，也不会为了同步新闻再次调用 LLM。
+全局只保留一个 `channel_send` 工具，负责发送文字、图片和文件；不再提供 `channel_news`、通用外发记录查询或新闻专属系统提示词。SQLite 内部投递账本继续保存状态、幂等键及远端消息 ID，用于防重复和故障排查。
 
-SQLite 投递账本仍然保留投递状态、消息 ID、幂等键及已发新闻原文，用于防止重复发送、支持出错恢复；这只是内部投递记录，**不是第二份聊天历史**。
-
-全局 `channel_send` 工具只负责发送文字、图片和文件，不再暴露无关的外发归档查询参数；只有新闻 Session 的 Agent 注册只读 `channel_news(action=list/read)` 用于回查已确认投递的历史新闻。其他 Session 不再收到外发记录系统提示词，也不会显示新闻查询工具。
-
-新闻 Session 的下一次正常模型请求仍会获取最近最多三期、合计不超过 12000 字的新闻原文，更早的新闻可按需回查。新闻为不可信外部参考资料，不代表用户指令，也不会自动纳入 Dream 记忆；定时发送本身不会额外启动模型。
+需要让定时结果进入原生对话历史时，使用 DSH 内置 Schedule，并绑定目标 Session。定时任务通过正常模型回合执行和保存回复，可以继续复用原有新闻采集与投递脚本。此方式会产生一次正常 LLM 调用；历史读取复用原生 Session/LCM，不额外增加新闻工具。

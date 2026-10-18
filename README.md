@@ -14,9 +14,9 @@
 
 ## Proactive outbound messaging
 
-Channel Core supports **agent-initiated outbound messages** without a preceding inbound message. The **single** model tool `channel_send` sends from the current native DSH Session to its **already bound and currently authorized** Feishu or Discord conversation, and also provides read-only access to that Session's proactive outbound history. The host/plugin API `ctx.channelCore.sendToBoundSession({ sessionId, text, idempotencyKey, bindingId?, source? })` allows trusted schedulers and other integrations to send the same way; `outboundTargets(sessionId)` lists eligible binding IDs without exposing destination identifiers.
+Channel Core supports agent-initiated outbound messages without a preceding inbound message. The only model-facing channel tool, `channel_send({ text?, imagePath?, filePath?, bindingId?, idempotencyKey? })`, sends to the current native Session's existing and currently authorized Feishu or Discord destination. It has no archive search/read actions or news-specific tools. The trusted host API `ctx.channelCore.sendToBoundSession({ sessionId, text, idempotencyKey, bindingId?, source? })` remains available to schedulers and other plugins; `outboundTargets(sessionId)` returns eligible binding IDs without exposing recipient IDs.
 
-- **Tool actions:** `channel_send({ text, bindingId?, idempotencyKey? })` remains the default **send** operation (compatible with existing calls). `channel_send({ action: 'list', query?, source?, limit?, before?, cursorId? })` lists archived outbound messages, and `channel_send({ action: 'read', id, offset? })` reads original text. `list`/`read` never send anything; mixing send and read arguments is rejected. No separate outbound-records model tool is registered.
+- **Tool scope:** One call sends text, one Feishu image or one Feishu file. File paths must be within the current workspace and are uploaded as media, not sent as a Markdown path. To persist scheduled output to conversation history, use native DSH Schedule bound to the relevant Session.
 - **Scope:** A session can send only to its own eligible bindings. Multiple bindings require an explicit `bindingId`; arbitrary recipient IDs and cross-session delivery are not accepted. Group allowlists and current DM/owner permission are checked again on send.
 - **Delivery:** Uses the existing durable outbox and platform send adapters, with state `pending`, `sent`, `failed`, or `uncertain`. Reusing a stable idempotency key does not send the same message twice. A potentially delivered but unacknowledged message is **not** blindly retried.
 - **Automation:** Jobs can call `channel_send` after creating a report (e.g. a scheduled financial report), or trusted plugins can call `sendToBoundSession` directly. This does **not** automatically broadcast every scheduled result, and it does not grant an agent permission to send to arbitrary accounts.
@@ -82,12 +82,8 @@ The Session-scoped `channel_send` model tool supports `{action:"send",imagePath:
 
 Feishu CardKit final replies retry closing/updating **the same existing card** once when the initial terminal edit fails. The delivery ledger keeps ambiguous failures as `uncertain` rather than blindly sending a duplicate, and `channel.final-delivered` / `channel.final-delivery-failed` diagnostics make stuck progress easier to investigate.
 
-## News lives in its native Session
+## Native Session scheduling and outbound records
 
-The existing Windows news task continues to trigger the DSH news relay; there is no second chat Session or additional model call. Only after Feishu confirms delivery does the optional private relay append an ignorable, UI-visible native plugin record to the designated Feishu-news Session. This does not alter native user/assistant transcript messages.
+The global `channel_send` tool only delivers messages; it does not offer news history tools, outbound archive queries, or news system prompt injection. A private transport ledger retains delivery state, remote IDs and idempotency keys to avoid duplicates.
 
-The persistent SQLite delivery ledger holds transport status, IDs, idempotency keys and the exact sent news text to prevent duplicates and support recovery; it is **not** another conversation or an Agent memory store.
-
-The globally available `channel_send` tool **only sends** text, images and files. It no longer exposes general-purpose outbound archive `list/read` operations. Only the designated Feishu-news Session Agent registers `channel_news(action=list/read)` for confirmed Feishu news history; ordinary Agents do not see this tool or receive any outbound-archive system prompt.
-
-On its next normal model request, the news Agent receives up to three latest confirmed news bodies, capped at 12,000 characters. Older news may be retrieved on demand through `channel_news`. News text is untrusted reference material, not user instructions or Dream memory. Scheduled delivery triggers no extra model request.
+To retain recurring results in a native Session, use the Host's built-in DSH Schedule bound to that Session. Each run creates a normal model turn and its reply becomes part of the ordinary Session history. This incurs a model call, unlike zero-LLM direct pushes; historical search uses standard Session / LCM abilities rather than a bespoke news tool.
