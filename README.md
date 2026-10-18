@@ -72,13 +72,13 @@ Other plugins remain independent: they can optionally emit `dsh/task-alert` with
 
 ## Sending ordinary files to Feishu
 
-The existing Session-scoped `channel_send` tool also supports `{action:"send",filePath:"_scratch/report.pdf"}` to send an **actual downloadable Feishu file attachment**. Supported formats include PDF, Word, Excel, PowerPoint, ZIP, 7z, RAR, TXT, CSV, Markdown, JSON and related document formats (max 30 MB per file). Images continue to use `imagePath`.
+The existing Session-scoped `channel_send` tool also supports `{filePath:"_scratch/report.pdf"}` to send an **actual downloadable Feishu file attachment**. Supported formats include PDF, Word, Excel, PowerPoint, ZIP, 7z, RAR, TXT, CSV, Markdown, JSON and related document formats (max 30 MB per file). Images continue to use `imagePath`.
 
 Files are restricted to the current authorized Session workspace, validated by canonical path and content signature, and fingerprinted with SHA-256 both before queuing and delivery. Existing binding authorization, outbound idempotency, and uncertain-delivery safeguards apply. One call sends one attachment. Native file messages do not carry captions: send any explanatory text separately.
 
 ## Sending images to Feishu
 
-The Session-scoped `channel_send` model tool supports `{action:"send",imagePath:"..."}` for a **real outbound Feishu image**. The image must be a PNG/JPEG/GIF/WebP inside the current DSH workspace, at most 10 MiB. The adapter validates canonical paths, file magic and SHA-256, then lets the Feishu SDK upload the media and send a native image message; a Markdown `![image](local-path)` reference alone does **not** send a picture. Existing Session binding authorization and durable idempotency continue to apply.
+The Session-scoped `channel_send` model tool supports `{imagePath:"..."}` for a **real outbound Feishu image**. The image must be a PNG/JPEG/GIF/WebP inside the current DSH workspace, at most 10 MiB. The adapter validates canonical paths, file magic and SHA-256, then lets the Feishu SDK upload the media and send a native image message; a Markdown `![image](local-path)` reference alone does **not** send a picture. Existing Session binding authorization and durable idempotency continue to apply.
 
 Feishu CardKit final replies retry closing/updating **the same existing card** once when the initial terminal edit fails. The delivery ledger keeps ambiguous failures as `uncertain` rather than blindly sending a duplicate, and `channel.final-delivered` / `channel.final-delivery-failed` diagnostics make stuck progress easier to investigate.
 
