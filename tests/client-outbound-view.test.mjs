@@ -1,5 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+
+test('client manifest loads native Session, conversation and chat providers for archive projection',()=>{
+ const manifest=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8'));
+ const injections=new Set(manifest.dsh.client.inject);
+ const native=['@deepseek-ai/dsh-client-ui-workspace','@deepseek-ai/dsh-client-ui-conversation','@deepseek-ai/dsh-client-ui-chat'];
+ for(const plugin of native){
+  assert(injections.has(plugin),'missing client injection: '+plugin);
+  assert(Object.hasOwn(manifest.peerDependencies,plugin),'missing peer dependency: '+plugin);
+ }
+});
+
 
 test('news archive renders in empty native Session; switches to view after real turns, never creates messages',async()=>{
  let definition;
