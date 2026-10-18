@@ -58,7 +58,7 @@ test('only matching Session gets news hint; hint never inlines the news body',as
   assert.equal(section.name,'channel:outbound-archive');
   const assembly={sections:[{name:'channel:outbound-archive',text:''},{name:'harness:identity',text:'identity'}]};
   const result=await handlers['system-prompt/assemble'](null,{agent,signal:new AbortController().signal},async()=>assembly);
-  assert.match(result.sections[0].text,/channel_outbound_records/);
+  assert.match(result.sections[0].text,/channel_send/);
   assert.match(result.sections[0].text,/om_test_/);
   assert.doesNotMatch(result.sections[0].text,/新闻原文：A/);
   agent.session.id='session-empty';
@@ -67,22 +67,38 @@ test('only matching Session gets news hint; hint never inlines the news body',as
   assert.equal(newsArchiveHint(f.core,'session-empty'),'');
  }finally{f.close();}
 });
-test('registered LLM tool reads but cannot send; wrong Session and unbound tool denied',async()=>{
+test('one channel_send tool supports read-only list/read and compatible send',async()=>{
  const f=fixture();try{
-  const tools=new Map();let created;
+  const tools=new Map();let created;const sendCalls=[];
+  f.core.sendToBoundSession=async value=>{sendCalls.push(value);return {state:'sent',id:'delivery-1'};};
   installNewsAgentTool({inject(deps,cb){assert.deepEqual(deps,['tools']);cb({tools:{register(tool){tools.set(tool.name,tool);}}});},on(event,callback){assert.equal(event,'agent/created');created=callback;}},f.core);
-  assert.equal(tools.has('channel_news_records'),false,'新闻专用模型工具已删除');
-  const registered=tools.get('channel_outbound_records');
-  assert(registered);
+  assert.deepEqual([...tools.keys()],['channel_send'],'exactly one model-facing channel tool');
+  const registered=tools.get('channel_send');
+  assert(registered.parameters.properties.action.enum.includes('read'));
   const ac=new AbortController();
-  const exec={agent:{session:{id:SESSION}},signal:ac.signal};
+  const exec={agent:{session:{id:SESSION}},callId:'call-1',signal:ac.signal};
   const listing=await registered.execute({action:'list'},exec);
   assert.equal(listing.records[0].id,f.id);
   assert.deepEqual(registered.output.render(null,listing),[{type:'text',text:JSON.stringify(listing)}]);
-  assert.equal((await registered.execute({action:'list'},{...exec,agent:{session:{id:'session-stranger'}}})).records.length,0,'other Session is empty, not leaked');
+  const detail=await registered.execute({action:'read',id:f.id},exec);
+  assert.equal(detail.text,'新闻原文：A\n**B**');
+  assert.equal(sendCalls.length,0,'list/read must have no delivery side effects');
+  assert.equal((await registered.execute({action:'list'},{...exec,agent:{session:{id:'session-stranger'}}})).records.length,0);
+  await assert.rejects(registered.execute({action:'read',id:f.id},{...exec,agent:{session:{id:'session-stranger'}}}),/record-not-found/);
   await assert.rejects(registered.execute({action:'list'},{signal:ac.signal}),/session-denied/);
+  for(const args of [{action:'list',text:'DO NOT SEND'},{action:'read',id:f.id,idempotencyKey:'x'},
+   {action:'send',text:'hello',query:'abc'},{action:'send',text:' '},{action:'invalid',text:'hello'},{}]){
+   await assert.rejects(registered.execute(args,exec));
+  }
+  assert.equal(sendCalls.length,0,'mixed, invalid and incomplete requests cannot send');
+  assert.deepEqual(await registered.execute({text:'legacy send'},exec),{state:'sent',id:'delivery-1'});
+  assert.deepEqual(await registered.execute({action:'send',text:'new send',bindingId:'binding-test',idempotencyKey:'stable-key'},exec),{state:'sent',id:'delivery-1'});
+  assert.deepEqual(sendCalls,[
+   {sessionId:SESSION,bindingId:undefined,text:'legacy send',idempotencyKey:'call-1',source:'agent'},
+   {sessionId:SESSION,bindingId:'binding-test',text:'new send',idempotencyKey:'stable-key',source:'agent'}
+  ]);
   assert.equal(typeof created,'function');
-  ac.abort();
-  await assert.rejects(registered.execute({action:'list'},exec),{name:'AbortError'});
+  ac.abort();await assert.rejects(registered.execute({action:'list'},exec),{name:'AbortError'});
+  assert.equal(sendCalls.length,2);
  }finally{f.close();}
 });
