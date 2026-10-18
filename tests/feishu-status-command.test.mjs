@@ -2,17 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import ChannelCore from '../lib/index.js';
 
-function fixture({owner=true,kind='dm',provider='feishu',viewer='baize-owner'}={}){
+function fixture({owner=true,kind='dm',provider='feishu',viewer='test-owner'}={}){
  const responses=[],scope={workspaceId:'default'},sessionId='s1';
  const core=Object.create(ChannelCore.prototype);
  core.closed=false;core.commandTasks=new Map();core.configFile={value:{defaultMode:'steering',sharedDM:true}};
  const message={provider,accountId:'bot',userId:viewer,conversationId:'chat',kind,text:'/status',messageId:'reply-1'};
  const route={receiptKey:'receipt',message,binding:{id:'binding',sessionId,scope},inboundMode:'steer'};
  core.router={route:()=>route};core.archivedRecovery={recover:async()=>route};
- core.store={owner:()=>owner?{userId:'baize-owner'}:null,db:{prepare:()=>({get:()=>({at:Date.now()-23000})})}};
+ core.store={owner:()=>owner?{userId:'test-owner'}:null,db:{prepare:()=>({get:()=>({at:Date.now()-23000})})}};
  const used={personal:0,old:0};
  core.statusCenter={
-  async feishuPersonalStatus(){used.personal++;return {text:'白泽状态',card:{schema:'2.0',body:{elements:[]}}};},
+  async feishuPersonalStatus(){used.personal++;return {text:'DSH 状态',card:{schema:'2.0',body:{elements:[]}}};},
   async channelStatus(){used.old++;return 'old-status';}
  };
  core.bridge={store:{command:()=>({request:{origin:{...message,bindingId:'binding'},binding:route.binding,mode:'steer',create:{}}}),finishCommand:()=>{}},reply:(_origin,body)=>responses.push(body)};
@@ -23,7 +23,7 @@ test('verified owner in Feishu DM receives personal status card instead of legac
  await f.core.command(f.message,'status','');
  assert.equal(f.used.personal,1);assert.equal(f.used.old,0);
  assert.equal(f.responses.length,1);assert.equal(f.responses[0].feishuStatusCard.schema,'2.0');
- assert.equal(f.responses[0].text,'白泽状态');
+ assert.equal(f.responses[0].text,'DSH 状态');
 });
 test('Feishu group and non-owner DM cannot read private account balance',async()=>{
  for(const options of [{kind:'group'},{viewer:'stranger'},{owner:false}]){

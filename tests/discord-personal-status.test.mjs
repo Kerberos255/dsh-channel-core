@@ -19,7 +19,7 @@ function mock() {
   async destroy(){}
  }
  const sdk={Client,Options:{cacheWithLimits:()=>()=>{}},GatewayIntentBits:{Guilds:1,GuildMessages:2,DirectMessages:3,MessageContent:4},Partials:{Channel:1}};
- const panel={embeds:[{title:'🐾 白泽状态'}],allowedMentions:{parse:[]}};
+ const panel={embeds:[{title:'📊 DSH 状态'}],allowedMentions:{parse:[]}};
  async function create(statusPanel) {
   return createTransport({config:schema.validate({}),credentials:['token'],signal:new AbortController().signal,receive:async()=>{received.push('ordinary')},state:()=>{},action:async()=>{},sessions:async()=>[],statusPanel},sdk);
  }
@@ -52,7 +52,7 @@ test('Discord slash /status uses ephemeral embed, never dispatches a public Agen
   await settle();
   assert.equal(f.operations[0].name,'deferReply');
   assert.deepEqual(f.operations[0].value,{flags:64});
-  assert.equal(interaction.result().embeds[0].title,'🐾 白泽状态');
+  assert.equal(interaction.result().embeds[0].title,'📊 DSH 状态');
   assert.deepEqual(lookups,[{userId:'owner',kind:'group'}]);
   assert.equal(f.received.length,0);
  }finally{await transport.close();}
@@ -87,9 +87,9 @@ test('Discord runtime requires matching configured owner and never exposes dashb
  const runtime=Object.create(ChannelRuntime.prototype);
  runtime.provider='discord';runtime.closed=false;
  let calls=0,owner='owner';
- runtime.core={store:{owner:()=>owner?{userId:owner}:null},recentReplyAtForOwner:()=>12345,statusCenter:{discordPersonalStatus:async(viewer,at)=>{calls++;assert.equal(viewer.provider,'discord');assert.equal(at,12345);return{embeds:[{title:'🐾 白泽状态'}]};}}};
+ runtime.core={store:{owner:()=>owner?{userId:owner}:null},recentReplyAtForOwner:()=>12345,statusCenter:{discordPersonalStatus:async(viewer,at)=>{calls++;assert.equal(viewer.provider,'discord');assert.equal(at,12345);return{embeds:[{title:'📊 DSH 状态'}]};}}};
  const config={accountId:'default'},signal=new AbortController().signal;
- assert.equal((await runtime.discordStatusPanel({userId:'owner'},config,signal)).embeds[0].title,'🐾 白泽状态');
+ assert.equal((await runtime.discordStatusPanel({userId:'owner'},config,signal)).embeds[0].title,'📊 DSH 状态');
  assert.equal(await runtime.discordStatusPanel({userId:'stranger'},config,signal),null);
  owner=null;
  assert.equal(await runtime.discordStatusPanel({userId:'owner'},config,signal),null);

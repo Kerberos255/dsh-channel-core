@@ -25,7 +25,7 @@ const activity={tools:[{name:'read_file',status:'running',detail:'DESIGN.md'},{n
 
 test('custom Feishu /status sends the native card without the generic Agent footer',async()=>{
  const f=fixture(),t=await f.create();try{
-  const custom={schema:'2.0',header:{template:'blue',title:{tag:'plain_text',content:'🐾 白泽状态'}},body:{elements:[{tag:'markdown',content:'最近响应：23秒前'}]}};
+  const custom={schema:'2.0',header:{template:'blue',title:{tag:'plain_text',content:'📊 DSH 状态'}},body:{elements:[{tag:'markdown',content:'最近响应：23秒前'}]}};
   await t.send(origin,{text:'private-account',status:'completed',final:true,feishuStatusCard:custom});
   assert.equal(f.calls.length,1);
   assert.equal(f.calls[0].type,'send');
