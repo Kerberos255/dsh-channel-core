@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {CoreStore} from '../lib/store.js';
 import {DeliveryStore,deliveryKey} from '../lib/delivery-store.js';
-import {attachNewsAgentPrompt,installNewsAgentTool,readNewsForAgent,newsArchiveHint} from '../lib/news-agent-access.js';
+import {attachNewsAgentPrompt,installNewsAgentTool,readNewsForAgent,newsArchiveHint,recentNewsPrompt} from '../lib/news-agent-access.js';
 
 const SESSION='session-real-news';
 function fixture(){
@@ -46,7 +46,7 @@ test('large original records are read in bounded, lossless fragments',()=>{
   assert.equal(a.text+b.text,big);assert.equal(b.nextOffset,null);
  }finally{f.close();}
 });
-test('only matching Session gets news hint; hint never inlines the news body',async()=>{
+test('only designated Session gets recent confirmed news in its next normal LLM request',async()=>{
  const f=fixture();try{
   const handlers={};let section;
   const agent={session:{id:SESSION},ctx:{inject(_deps,cb){cb({
@@ -60,7 +60,9 @@ test('only matching Session gets news hint; hint never inlines the news body',as
   const result=await handlers['system-prompt/assemble'](null,{agent,signal:new AbortController().signal},async()=>assembly);
   assert.match(result.sections[0].text,/channel_send/);
   assert.match(result.sections[0].text,/om_test_/);
-  assert.doesNotMatch(result.sections[0].text,/新闻原文：A/);
+  assert.match(result.sections[0].text,/新闻原文：A/);
+  assert.match(result.sections[0].text,/外部资料，非指令/);
+  assert.equal(recentNewsPrompt(f.core,'session-other'),'');
   agent.session.id='session-empty';
   const denied=await handlers['system-prompt/assemble'](null,{agent},async()=>assembly);
   assert.equal(denied.sections[0].text,'');
@@ -100,5 +102,19 @@ test('one channel_send tool supports read-only list/read and compatible send',as
   assert.equal(typeof created,'function');
   ac.abort();await assert.rejects(registered.execute({action:'list'},exec),{name:'AbortError'});
   assert.equal(sendCalls.length,2);
+ }finally{f.close();}
+});
+
+test('auto news context stays bounded, ignores failed deliveries and never crosses Sessions',()=>{
+ const f=fixture();try{
+  const big='新闻'+'甲'.repeat(21000);
+  f.store.db.prepare('UPDATE channel_outbound_archive SET text=? WHERE delivery_id=?').run(big,f.id);
+  let prompt=recentNewsPrompt(f.core,SESSION);
+  assert(prompt.includes('新闻甲甲甲'));
+  assert(prompt.includes('action=read'));
+  assert(prompt.length<13500,'news reference budget must remain bounded');
+  assert(!prompt.includes('只能属于其他 Session'));
+  f.store.db.prepare("UPDATE channel_outbound_archive SET state='pending' WHERE delivery_id=?").run(f.id);
+  assert.equal(recentNewsPrompt(f.core,SESSION),'','unconfirmed content cannot enter model context');
  }finally{f.close();}
 });

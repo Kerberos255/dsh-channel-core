@@ -14,7 +14,7 @@
 
 ## 主动消息投递
 
-**会话界面已精简**：不再额外添加无效的「外发记录」选项卡。通用外发归档仍可用 `channel_send` 的 `action=list/read` 只读检索。本机私有新闻桥会在飞书确认发送后，另外通过 DSH 原生 Session Controller 把已投递新闻同步为「飞书-新闻」的真实会话回合；不会直接修改日志文件，也不会为了补录而重复发送飞书。
+**会话界面已精简**：不再额外添加无效的「外发记录」选项卡。通用外发归档仍可用 `channel_send` 的 `action=list/read` 只读检索。本机私有新闻桥会在飞书确认发送后，通过 DSH 实验性 `appendPluginRecord` 接口把新闻保存为原生会话的可忽略插件记录，使用聊天节点显示在正常时间线，不伪造用户或助手回合、不触发第二次 LLM，也不直接修改压缩日志文件。
 
 Channel Core 现支持**无需用户先发送消息的主动投递**。Agent 可以通过 `channel_send` 向自己原生 DSH Session **已经绑定、且当前授权有效**的飞书或 Discord 会话发送纯文本消息；定时任务、Dream 等可信插件也可调用 `ctx.channelCore.sendToBoundSession({ sessionId, text, idempotencyKey, bindingId?, source? })`，并通过 `outboundTargets(sessionId)` 查询可选的绑定 ID。
 
@@ -73,4 +73,4 @@ Dream 等插件不依赖 Channel Core，任务先持久记录失败，再选择�
 
 ## Session 级只读外发归档
 
-通过 Channel Core 的 `channel_send` 或 `sendToBoundSession` 主动投递到飞书、Discord 的消息（例如新闻、定时报告、任务异常提醒）会在外发前独立归档原文、来源、发送状态、时间和平台消息 ID。当前 Session 的模型可以通过唯一的只读工具 `channel_outbound_records` 检索、分页与读取；其它 Session 不能通过该模型工具访问。模型提示词只提供少量元数据，不会自动灌入整篇正文。读取不会重新发送消息或将外发内容伪装为用户消息，也不会直接成为 Dream 的输入。普通对话回复、绕过 Channel Core 的发送以及升级前的旧消息不自动补录。
+通过 Channel Core 的 `channel_send` 或 `sendToBoundSession` 主动投递到飞书、Discord 的消息（例如新闻、定时报告、任务异常提醒）会在外发前独立归档原文、来源、发送状态、时间和平台消息 ID。当前 Session 的模型可使用统一的 `channel_send(action=list/read)` 检索、分页与读取（查询完全只读）；其它 Session 无权查看。普通 Session 仅在模型提示词里看到少量元数据；只有已绑定的「飞书-新闻」Session 会在下一次正常模型请求中自动获得最近最多 3 期已确认新闻原文、合计至多 12000 字，其他/更早内容仍由 `channel_send` 按需读取。资料明确标记为外部参考、非用户指令；这不会在新闻发送时额外触发模型。读取不会重新发送消息或将外发内容伪装为用户消息，也不会直接成为 Dream 的输入。普通对话回复、绕过 Channel Core 的发送以及升级前的旧消息不自动补录。
