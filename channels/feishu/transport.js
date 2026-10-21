@@ -166,7 +166,7 @@ export async function finalizeCardKitMessage(kitApi,record,payload){
   }
  }
 }
-export async function createTransport({config,credentials,signal,receive,state,action,host,menuStatus},sdkOverride){
+export async function createTransport({config,credentials,signal,receive,state,diagnostic,action,host,menuStatus},sdkOverride){
   const sdk=sdkOverride??await import('@larksuiteoapi/node-sdk');
   const silent=Object.fromEntries(['error','warn','info','debug','trace'].map(name=>[name,()=>{}]));
   const http=sdk.defaultHttpInstance?{
@@ -200,6 +200,10 @@ export async function createTransport({config,credentials,signal,receive,state,a
   // Recall it only after the bridge has authenticated and accepted the answer.
   // If Feishu disallows recall (permission/retention policy), remove buttons
   // with a non-interactive card update instead of pretending it disappeared.
+  const SAFE_CODE=/^[a-z]+(?:-[a-z]+){0,2}$/;
+  // Card-level degradation stays out of the channel connection status: the text
+  // is still shown to the user, but only a structured diagnostic is recorded.
+  const cardNotice=(message,code)=>{diagnostic?.('warn','channel.card-degraded',{code:SAFE_CODE.test(String(code??''))?code:'unknown',state:'failed'});state(message,undefined,'card');};
   async function retireQuestionCard(messageId,conversationId,answered,reason){
     if(!messageId||!conversationId)return;
     const match=[...questionCards.entries()].find(([id,record])=>{
@@ -225,7 +229,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
       await channel.updateCard(record.messageId,finished);
       questionCards.delete(id);
     }catch(error){
-      state('飞书问题卡更新失败：'+(error?.code??'api-error'));
+      cardNotice('飞书问题卡更新失败：'+(error?.code??'api-error'),error?.code);
     }
   }
   const originalAction=action;
@@ -236,7 +240,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
       if(active)active.accepted=true;
       // A successful selection must ACK without waiting for remote card recall.
       void retireQuestionCard(request.messageId,request.conversationId,outcome.answered)
-        .catch(error=>state('飞书问题卡清理失败：'+(error?.code??'unknown'),false));
+        .catch(error=>cardNotice('飞书问题卡清理失败：'+(error?.code??'unknown'),error?.code));
     }
     return outcome;
   };
@@ -292,7 +296,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
     const id=key(origin),signature=JSON.stringify(payload);
     if(streaming&&!kitApi&&config.streaming.cardEngine==='cardkit'&&!kitDisabled){
       kitApi=createCardKitChannel(channel);
-      if(!kitApi){kitDisabled=true;state('CardKit SDK 接口不可用，已自动使用兼容卡片',false);}
+      if(!kitApi){kitDisabled=true;cardNotice('CardKit SDK 接口不可用，已自动使用兼容卡片','sdk-unavailable');}
     }
     const existing=progress.get(id);
     if(existing&&presented.get(id)===signature)return {messageId:existing};
@@ -320,7 +324,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
       }catch(error){
         if(error?.status!==404&&error?.statusCode!==404)throw error;
         progress.delete(id);presented.delete(id);
-        state('原进度卡片不存在，'+(recreateMissing?'重新发送卡片':'已跳过折叠思考卡'),false);
+        cardNotice('原进度卡片不存在，'+(recreateMissing?'重新发送卡片':'已跳过折叠思考卡'),'card-missing');
         if(!recreateMissing)return {messageId:null};
       }
     }
@@ -334,7 +338,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
         // Fallback is safe only when card.create failed BEFORE any IM send.
         if(!error.cardKitFallbackSafe)throw error;
         kitDisabled=true;
-        state('CardKit 创建不可用，已回退兼容卡片：'+(error.code??'api-unavailable'),false);
+        cardNotice('CardKit 创建不可用，已回退兼容卡片：'+(error.code??'api-unavailable'),error?.code);
       }
     }
     checkAbort(signal);
@@ -390,7 +394,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
       }
       if(hasDrafts){
         try{await presentPayload(origin,draftCard(finished),{recreateMissing:false});}
-        catch(error){state('飞书最终答复已发送，但折叠思考卡更新失败：'+(error?.code??'unknown'));}
+        catch(error){cardNotice('飞书最终答复已发送，但折叠思考卡更新失败：'+(error?.code??'unknown'),error?.code);}
       }
       progress.delete(key(origin));presented.delete(key(origin));kitRecords.delete(key(origin));
       const pendingQuestion=questionCards.get(key(origin));

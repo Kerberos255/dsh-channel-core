@@ -9,6 +9,12 @@ This file holds historical behavior notes formerly embedded in README. For curre
 - Added one model-facing read-only tool, `channel_outbound_records`, and a Session-scoped archive viewer. The temporary news-only model tool is not registered.
 - Added regressions for multiple sources, Discord, pagination, idempotency, authorization and source integrity; no local news tokens or bindings are published.
 
+## 0.4.89
+
+- Card-level degradation (question-card retirement, CardKit fallbacks, progress-card updates) now records a structured `channel.card-degraded` diagnostic instead of a channel status error, so connection health no longer reports display fallbacks as channel failures.
+- `state(message, connected, scope)` gains an optional `scope`; only `channel` scope writes `channel.status-error`. Existing two-argument calls keep their behavior.
+- Regression covers both directions: a card notice raises no channel status error, while a channel-level message still does.
+
 ## 0.4.88
 
 - Fail invalidated live Ask User callbacks explicitly, release the original pending request, and retire unusable Feishu cards without interpreting old clicks as new answers.

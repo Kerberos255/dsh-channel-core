@@ -12,13 +12,24 @@ function fixture(extra={},configFile) {
   const config=configFile?.value??{enabled:true,allowedUsers:[],allowedGroups:[],allowGroups:true,requireMention:false,accountId:'test',identityLinks:[],agentPreset:'agent',workspacePath:'',memoryNamespace:'private',inputMode:'inherit',...extra};
   const callbacks=new Set(),calls=[],events=new Map();
   const settings={configFile:configFile??{value:config,subscribe(fn){callbacks.add(fn);return()=>callbacks.delete(fn);}}};
-  const ctx={credentials:{async resolve(){return{value:'fixture'};}},channelCore:{resolveWorkspace:async config=>config.workspacePath||'E:\\dsh\\deepseek-harness\\default-workspace',networkReady:Promise.resolve(),runtimeNetwork:{source:'system'},store:{syncAliases(){},claimOwner(){return null;},setOwner(){return null;}},bridge:{register(){return()=>{};}},receive:async(message)=>{calls.push(message);return{accepted:true};}},on(name,fn){events.set(name,fn);return()=>events.delete(name);}};
+  const records=[];
+  const ctx={get:(name)=>name==='pluginDiagnostics'?{record(...row){records.push(row);}}:undefined,credentials:{async resolve(){return{value:'fixture'};}},channelCore:{resolveWorkspace:async config=>config.workspacePath||'E:\\dsh\\deepseek-harness\\default-workspace',networkReady:Promise.resolve(),runtimeNetwork:{source:'system'},store:{syncAliases(){},claimOwner(){return null;},setOwner(){return null;}},bridge:{register(){return()=>{};}},receive:async(message)=>{calls.push(message);return{accepted:true};}},on(name,fn){events.set(name,fn);return()=>events.delete(name);}};
   let transportArgs,starts=0;
   const runtime=new ChannelRuntime(ctx,settings,{provider:'discord',credentialRefs:()=>['DISCORD_BOT_TOKEN'],createTransport:async args=>{transportArgs=args;return{start:async()=>{starts++;},close:async()=>{},details:()=>({applicationId:'application-fixture'})};}});
-  return{runtime,ctx,calls,settings,get starts(){return starts;},get transportArgs(){return transportArgs;}};
+  return{runtime,ctx,calls,records,settings,get starts(){return starts;},get transportArgs(){return transportArgs;}};
 }
 const group={kind:'group',userId:'any-member',conversationId:'any-channel',text:'hello',resources:[],mentionedBot:false};
 
+test('card-level notices never raise a channel status error',async()=>{
+ const f=fixture();
+ try {
+  await f.runtime.reconfigure();
+  f.transportArgs.state('飞书问题卡更新失败：api-error',undefined,'card');
+  assert.equal(f.records.filter(row=>row[2]==='channel.status-error').length,0);
+  f.transportArgs.state('渠道错误：boom');
+  assert.equal(f.records.filter(row=>row[2]==='channel.status-error').length,1);
+ } finally { await f.runtime.close(); }
+});
 test('empty allowlists permit bot login while unauthorized messages stay outside the agent',async()=>{
  const f=fixture();try{await f.runtime.reconfigure();assert.equal(f.starts,1);assert(f.runtime.details().connected);assert.match(f.runtime.details().receiveMessage,/尚未配置/);assert.equal(f.runtime.details().applicationId,'application-fixture');assert.deepEqual(await f.transportArgs.receive(group),{ignored:true});assert.equal(f.calls.length,0);}finally{await f.runtime.close();}
 });
