@@ -18,7 +18,7 @@ function fixture(streaming={mode:'progress'},behavior={}){
   async connect(){},async disconnect(){},rawClient:behavior.rawClient
  };
  const sdk={createLarkChannel:()=>channel,Domain:{Lark:'lark',Feishu:'feishu'}};
- const create=()=>createTransport({config:schema.validate({streaming,...(behavior.config??{})}),credentials:['fixture'],signal:new AbortController().signal,receive:async()=>{},state:()=>{},action:behavior.action??(async()=>{}),host:behavior.host},sdk);
+ const create=()=>createTransport({config:schema.validate({streaming,...(behavior.config??{})}),credentials:['fixture'],signal:new AbortController().signal,receive:async()=>{},state:behavior.state??(()=>{}),action:behavior.action??(async()=>{}),host:behavior.host},sdk);
  return {calls,listeners,create,behavior};
 }
 const activity={tools:[{name:'read_file',status:'running',detail:'DESIGN.md'},{name:'pwsh',status:'completed',detail:'npm pack'}],commentary:'检查脚本',narration:'内部推理\n最后思考'};
@@ -450,7 +450,7 @@ test('CardKit absence auto-degrades without breaking final reply or Ask User',as
   await t.send(origin,{status:'completed',text:'安全送达'});
   assert.equal(f.calls.filter(c=>c.type==='send').length,3);
   assert.equal(f.calls.filter(c=>c.type==='send').at(-1).body.card.body.elements[0].content,'安全送达');
-  assert.equal(f.calls.at(-1).payload.body.elements[0].content,'继续吗？\n\n✅ 已回答');
+  assert.equal(f.calls.at(-1).payload.body.elements[0].content,'继续吗？\n\n⚠️ 原回答请求已失效，请重新发起提问。');
  }finally{await t.close()}
 });
 
@@ -555,7 +555,7 @@ test('Feishu Ask User preserves committed context and creates an independent int
   await t.send(dm,{status:'completed',text:'最终答复',publicDrafts:['分析完成，等待确认。']});
   assert.equal(f.calls.filter(c=>c.type==='send').at(-1).body.card.body.elements[0].content,'最终答复');
   assert.equal(f.calls.at(-1).id,'card-2','obsolete question card is disabled, not left clickable');
-  assert.equal(f.calls.at(-1).payload.body.elements[0].content,'请选择其他项\n\n✅ 已回答');
+  assert.equal(f.calls.at(-1).payload.body.elements[0].content,'请选择其他项\n\n⚠️ 原回答请求已失效，请重新发起提问。');
   assert.equal(f.calls.filter(c=>c.type==='send').length,3);
  }finally{await t.close();}
 });
@@ -783,4 +783,36 @@ test('Feishu progress config isolates draft length from tool limits',()=>{
  assert.equal(schema.defaults.streaming.progress.draftMaxChars,600);
  for(const bad of [119,1001,500.2,'600',null])
    assert.throws(()=>schema.validate({streaming:{progress:{draftMaxChars:bad}}}));
+});
+
+test('stale Feishu callback returns an explanation, retires buttons and preserves channel connection',async()=>{
+ const states=[];
+ const f=fixture({mode:'progress',cardEngine:'patch'},{
+  state:(...args)=>states.push(args),
+  action:async()=>{throw Object.assign(new Error('stale'),{code:'stale-interaction'});}
+ });
+ const t=await f.create();
+ try{
+  await t.question(origin,{status:'waiting-user',text:'请确认'},[{label:'同意',token:'choice'}]);
+  const reply=await f.listeners.get('cardAction')({action:{value:{dsh:'choice'}},operator:{openId:origin.userId},chatId:origin.conversationId,messageId:'card-1'});
+  assert.equal(reply.toast.type,'error');
+  assert.match(reply.toast.content,/失效/);
+  await new Promise(resolve=>setImmediate(resolve));
+  const update=f.calls.find(item=>item.type==='update');
+  assert.equal(update.payload.header.title.content,'Agent · 已失效');
+  assert.equal(update.payload.body.elements.length,1);
+  assert(!states.some(args=>args[1]===false),'question error must not mark channel disconnected');
+ }finally{await t.close();}
+});
+
+test('Feishu question timeout updates the interactive card without pretending the user answered',async()=>{
+ const f=fixture({mode:'progress',cardEngine:'patch'}),t=await f.create();
+ try{
+  await t.question(origin,{status:'waiting-user',text:'请选择'},[{label:'选项',token:'choice'}]);
+  await t.questionClosed(origin,'card-1','ASK_USER_TIMEOUT');
+  const update=f.calls.find(item=>item.type==='update');
+  assert.match(update.payload.body.elements[0].content,/超时/);
+  assert.equal(update.payload.header.title.content,'Agent · 已失效');
+  assert.equal(update.payload.body.elements.length,1);
+ }finally{await t.close();}
 });

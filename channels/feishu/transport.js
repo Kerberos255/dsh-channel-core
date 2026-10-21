@@ -200,7 +200,7 @@ export async function createTransport({config,credentials,signal,receive,state,a
   // Recall it only after the bridge has authenticated and accepted the answer.
   // If Feishu disallows recall (permission/retention policy), remove buttons
   // with a non-interactive card update instead of pretending it disappeared.
-  async function retireQuestionCard(messageId,conversationId,answered){
+  async function retireQuestionCard(messageId,conversationId,answered,reason){
     if(!messageId||!conversationId)return;
     const match=[...questionCards.entries()].find(([id,record])=>{
       try{return JSON.parse(id)[0]===conversationId&&record.messageId===messageId;}
@@ -215,20 +215,25 @@ export async function createTransport({config,credentials,signal,receive,state,a
         .replace(/\n选好后点击“确认选择”。/gu,'');
       const title=String(previous.header?.title?.content??'Agent · 等待回答');
       const agentName=title.replace(/ · 等待回答$/u,'');
-      const response=Array.isArray(answered)&&answered.length?completedAskUserText(answered):questionText+'\n\n✅ 已回答';
-      const finished=card({agentName,status:'completed',text:response,final:true},[],config.streaming);
-      finished.header.title.content=safeAgent(agentName)+' · 已回答';
+      const inactive=typeof reason==='string';
+      const detail=reason==='ASK_USER_TIMEOUT'?'等待回答已超时':reason==='ASK_ABORTED'?'原任务已取消':'原回答请求已失效';
+      const response=inactive?questionText+'\n\n⚠️ '+detail+'，请重新发起提问。':
+        Array.isArray(answered)&&answered.length?completedAskUserText(answered):questionText+'\n\n✅ 已回答';
+      const finished=card({agentName,status:inactive?'failed':'completed',text:response,final:true},[],config.streaming);
+      finished.header.title.content=safeAgent(agentName)+(inactive?' · 已失效':' · 已回答');
       if(!withinBudget(finished))throw new Error('feishu-answer-card-too-large');
       await channel.updateCard(record.messageId,finished);
       questionCards.delete(id);
     }catch(error){
-      state('已收到回答，但问题卡更新失败：'+(error?.code??'api-error'),false);
+      state('飞书问题卡更新失败：'+(error?.code??'api-error'));
     }
   }
   const originalAction=action;
   action=async request=>{
     const outcome=await originalAction(request);
     if(outcome?.accepted&&outcome.completed){
+      const active=[...questionCards.values()].find(item=>item.messageId===request.messageId);
+      if(active)active.accepted=true;
       // A successful selection must ACK without waiting for remote card recall.
       void retireQuestionCard(request.messageId,request.conversationId,outcome.answered)
         .catch(error=>state('飞书问题卡清理失败：'+(error?.code??'unknown'),false));
@@ -267,8 +272,15 @@ export async function createTransport({config,credentials,signal,receive,state,a
         values:event.action?.option?[event.action.option]:undefined});
       return {toast:{type:'success',content:outcome?.completed?'已收到回答':'已记录选择'}};
     }catch(error){
-      state('飞书按钮回答未被接受：'+(error?.code??'unknown'),false);
-      return {toast:{type:'error',content:'回答未提交，请重新选择或用文字回答。'}};
+      if(error?.code==='stale-interaction'){
+        // A callback from an older rendering must not invalidate a newer card.
+        const record=[...questionCards.values()].find(item=>item.messageId===event.messageId);
+        if(record?.signature.includes(JSON.stringify(token).slice(1,-1)))
+          void retireQuestionCard(event.messageId,event.chatId,undefined,'ASK_USER_INVALIDATED');
+      }
+      const content=error?.code==='stale-interaction'?'这张问题卡已失效，请重新向 DSH 提问。':
+        error?.code==='interaction-actor-mismatch'?'请使用发起提问的原账号回答。':'回答未提交，请重新选择或用文字回答。';
+      return {toast:{type:'error',content}};
     }
   }));
   disposers.push(channel.on('error',error=>state('渠道错误：'+error.code)));
@@ -382,9 +394,13 @@ export async function createTransport({config,credentials,signal,receive,state,a
       }
       progress.delete(key(origin));presented.delete(key(origin));kitRecords.delete(key(origin));
       const pendingQuestion=questionCards.get(key(origin));
-      if(pendingQuestion)await retireQuestionCard(pendingQuestion.messageId,origin.conversationId);
+      if(pendingQuestion)await retireQuestionCard(pendingQuestion.messageId,origin.conversationId,undefined,
+        pendingQuestion.accepted?undefined:'ASK_USER_INVALIDATED');
       questionContexts.delete(key(origin));
       return result;
+    },
+    async questionClosed(origin,messageId,reason){
+      await retireQuestionCard(messageId,origin.conversationId,undefined,reason);
     },
     async question(origin,body,actions){
       const id=key(origin),context=String(body.context??''),previous=questionContexts.get(id)??'';

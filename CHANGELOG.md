@@ -9,6 +9,12 @@ This file holds historical behavior notes formerly embedded in README. For curre
 - Added one model-facing read-only tool, `channel_outbound_records`, and a Session-scoped archive viewer. The temporary news-only model tool is not registered.
 - Added regressions for multiple sources, Discord, pagination, idempotency, authorization and source integrity; no local news tokens or bindings are published.
 
+## 0.4.88
+
+- Fail invalidated live Ask User callbacks explicitly, release the original pending request, and retire unusable Feishu cards without interpreting old clicks as new answers.
+- Feishu callback errors return actionable feedback without falsely marking the channel disconnected. Timeout remains ten minutes.
+- Add privacy-safe error reason diagnostics and regression coverage of stale callbacks and timeouts.
+
 ## 0.4.66
 
 - **A collected group no longer kills the message that discovered it:** saving the collected chat id fired the settings subscription, which rebuilt the connection and aborted the in-flight signal, so `resolveSessionWorkspace` threw and the first message in a new group produced no session and no reply. Receive-scope edits (`allowedGroups` while auto-collection owns admission) now update the applied snapshot without reconnecting; every other field still rebuilds the connection.

@@ -674,3 +674,52 @@ test('Discord omits the committed draft prelude when the draft switch is off',as
   await off();
  }finally{await f.close();}
 });
+
+test('invalidated live Feishu answer unblocks the native question and retires the card',async()=>{
+ const f=fixture(),closed=[];
+ f.bridge.adapters.get(JSON.stringify(['feishu','test'])).adapter.questionClosed=async(origin,id,reason)=>closed.push({id,reason});
+ try{
+  const waiting=f.bridge.interactions.request({agent:f.agent,questions:[{id:'q',question:'继续吗？',options:[{label:'继续'}]}]},()=>assert.fail());
+  await f.bridge.idle();
+  const capability=f.questions.at(-1).actions[0].token;
+  f.store.db.prepare('DELETE FROM interactions WHERE token=?').run(capability);
+  await assert.rejects(f.bridge.answer({...f.origin,token:capability}),{code:'stale-interaction'});
+  await assert.rejects(waiting,{code:'ASK_USER_INVALIDATED'});
+  await f.bridge.idle();
+  assert.deepEqual(closed,[{id:'question-a',reason:'ASK_USER_INVALIDATED'}]);
+  assert.equal(f.bridge.interactions.pending.size,0);
+ }finally{await f.close();}
+});
+
+test('a stale answer from an older Feishu card cannot cancel the next question',async()=>{
+ const f=fixture();
+ try{
+  const ask=()=>f.bridge.interactions.request({agent:f.agent,questions:[{id:'q',question:'确认？',options:[{label:'同意'}]}]},()=>assert.fail());
+  const first=ask();await f.bridge.idle();
+  const previous=f.questions.at(-1).actions[0].token;
+  await f.bridge.answer({...f.origin,token:previous});
+  await first;
+  const second=ask();await f.bridge.idle();
+  const current=f.questions.at(-1).actions[0].token;
+  await assert.rejects(f.bridge.answer({...f.origin,token:previous}),{code:'stale-interaction'});
+  assert.equal(f.bridge.interactions.pending.size,1);
+  await f.bridge.answer({...f.origin,token:current});
+  assert.deepEqual((await second).answers[0].selected,['同意']);
+ }finally{await f.close();}
+});
+
+test('native question timeout releases wait, revokes capabilities and retires the card',async()=>{
+ const f=fixture(),closed=[];
+ f.bridge.adapters.get(JSON.stringify(['feishu','test'])).adapter.questionClosed=async(origin,id,reason)=>closed.push(reason);
+ try{
+  const waiting=f.bridge.interactions.request({agent:f.agent,questions:[{id:'q',question:'继续吗？'}]},()=>assert.fail());
+  await f.bridge.idle();
+  const active=[...f.bridge.interactions.pending.values()][0];
+  f.bridge.interactions.settle(active,Object.assign(new Error('ASK_USER_TIMEOUT'),{code:'ASK_USER_TIMEOUT'}));
+  await assert.rejects(waiting,{code:'ASK_USER_TIMEOUT'});
+  await f.bridge.idle();
+  assert.deepEqual(closed,['ASK_USER_TIMEOUT']);
+  assert.equal(f.bridge.interactions.pending.size,0);
+  assert.equal(f.store.db.prepare('SELECT count(*) AS n FROM interactions').get().n,0);
+ }finally{await f.close();}
+});
