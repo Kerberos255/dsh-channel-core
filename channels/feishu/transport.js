@@ -1,3 +1,4 @@
+import { PassThrough } from 'node:stream';
 import { checkAbort, boundedBytes, statusLabel } from 'dsh-channel-core/transport-utils';
 import { renderProgressLines } from 'dsh-channel-core/progress-lines';
 import { renderFooter } from '../discord/footer.js';
@@ -7,6 +8,32 @@ import { completedAskUserText } from '../../lib/answered-question.js';
 import { groupAllowlistFor } from '../../lib/channel-runtime.js';
 import { verifyQueuedImage } from '../../lib/outbound-image.js';
 import { verifyQueuedFile } from '../../lib/outbound-file.js';
+
+const imageExtension=head=>{
+  if(head.length>=12&&head.toString('latin1',0,4)==='RIFF'&&head.toString('latin1',8,12)==='WEBP')return 'webp';
+  if(head.length>=8&&head[0]===0x89&&head.toString('latin1',1,4)==='PNG')return 'png';
+  if(head.length>=3&&head[0]===0xff&&head[1]===0xd8&&head[2]===0xff)return 'jpg';
+  if(head.length>=6&&head.toString('latin1',0,3)==='GIF')return 'gif';
+  return null;
+};
+// Feishu image resources carry no file name and the bytes keep their original
+// format (WebP screenshots, JPEG photos), so the stored name follows the bytes.
+async function sniffImage(stream){
+  const head=await new Promise((resolve,reject)=>{
+    let settled=false;
+    const done=value=>{if(settled)return;settled=true;stream.off('readable',onReadable);stream.off('end',onEnd);stream.off('error',onError);resolve(value);};
+    const onReadable=()=>{const chunk=stream.read(16);if(chunk&&chunk.length)done(chunk);};
+    const onEnd=()=>done(Buffer.alloc(0));
+    const onError=error=>{if(settled)return;settled=true;stream.off('readable',onReadable);stream.off('end',onEnd);stream.off('error',onError);reject(error);};
+    stream.on('readable',onReadable);stream.once('end',onEnd);stream.once('error',onError);
+    onReadable();
+    if(stream.readableEnded)done(Buffer.alloc(0));
+  });
+  const extension=imageExtension(head),data=new PassThrough();
+  if(head.length)data.write(head);
+  stream.pipe(data);
+  return {name:`image.${extension??'png'}`,data};
+}
 
 export function normalize(message,config){
   return {provider:'feishu',accountId:config.accountId,conversationId:message.chatId,userId:message.senderId,messageId:message.messageId,
@@ -196,6 +223,40 @@ export async function createTransport({config,credentials,signal,receive,state,d
     return {...body,agentName:role||'Agent',footerText};
   }
   const progress=new Map(),presented=new Map(),kitRecords=new Map(),questionCards=new Map(),questionContexts=new Map(),disposers=[];
+  // Steer segmentation: generation guard plus the last payload a user actually saw.
+  // One record per card segment owns its generation and its last visible payload,
+  // so freezing, releasing and bounding the lifetime all happen in one place.
+  const SEGMENT_LIMIT=200;
+  const segments=new Map();
+  // One freeze per card id at a time: CardKit sequences must stay ordered even
+  // when two interjections arrive back to back.
+  const cuts=new Map();
+  const runCut=(id,task)=>{
+    const previous=cuts.get(id)??Promise.resolve();
+    const next=previous.catch(()=>{}).then(task);
+    cuts.set(id,next);
+    void next.catch(()=>{}).finally(()=>{if(cuts.get(id)===next)cuts.delete(id);});
+    return next;
+  };
+  const segmentOf=id=>segments.get(id)??{epoch:0,shown:null,at:0};
+  const trimSegments=()=>{
+    if(segments.size<=SEGMENT_LIMIT)return;
+    const stale=[...segments.entries()].sort((a,b)=>a[1].at-b[1].at).slice(0,segments.size-SEGMENT_LIMIT);
+    for(const [key] of stale)segments.delete(key);
+  };
+  const rememberShown=(id,payload)=>{
+    const segment=segmentOf(id);
+    segments.set(id,{epoch:segment.epoch,shown:payload,at:Date.now()});
+    trimSegments();
+  };
+  const bumpSegment=id=>{
+    const segment=segmentOf(id);
+    const epoch=segment.epoch+1;
+    segments.set(id,{epoch,shown:segment.shown,at:Date.now()});
+    return epoch;
+  };
+  // A finished card no longer needs its snapshot: every view is released here.
+  const releaseSegment=id=>{progress.delete(id);presented.delete(id);segments.delete(id);};
   // A completed Ask User button belongs to one specific bot-owned card.
   // Recall it only after the bridge has authenticated and accepted the answer.
   // If Feishu disallows recall (permission/retention policy), remove buttons
@@ -290,10 +351,12 @@ export async function createTransport({config,credentials,signal,receive,state,d
   disposers.push(channel.on('error',error=>state('渠道错误：'+error.code)));
   disposers.push(channel.on('reconnecting',()=>state('渠道正在重连…',false)));
   disposers.push(channel.on('reconnected',()=>state('渠道已重新连接',true)));
-  async function presentPayload(origin,payload,{recreateMissing=true,streaming=false}={}){
+  async function presentPayload(origin,payload,{recreateMissing=true,streaming=false,final=false}={}){
     checkAbort(signal);
     if(!withinBudget(payload))throw Object.assign(new Error('feishu-card-payload-too-large'),{definitelyNotSent:true});
     const id=key(origin),signature=JSON.stringify(payload);
+    const epoch=segmentOf(id).epoch;
+    const stale=()=>segmentOf(id).epoch!==epoch;
     if(streaming&&!kitApi&&config.streaming.cardEngine==='cardkit'&&!kitDisabled){
       kitApi=createCardKitChannel(channel);
       if(!kitApi){kitDisabled=true;cardNotice('CardKit SDK 接口不可用，已自动使用兼容卡片','sdk-unavailable');}
@@ -305,21 +368,28 @@ export async function createTransport({config,credentials,signal,receive,state,d
       // CardKit-linked IM messages must be edited through CardKit, not
       // through the legacy IM patch API. One serial sequence owns all updates.
       if(streaming&&record.streaming){
+        if(stale())return {messageId:record.messageId};
         const next=streamingCard(payload);
         const structure=JSON.stringify({header:next.header,extra:next.body.elements.slice(1)});
         if(record.structural!==structure)await kitApi.update(record,next);
         else await kitApi.text(record,next.body.elements[0].content);
       }else{
+        if(stale())return {messageId:record.messageId};
         await finalizeCardKitMessage(kitApi,record,payload);
         kitRecords.delete(id);
       }
+      rememberShown(id,payload);
       presented.set(id,signature);
+      if(final)releaseSegment(id);
       return {messageId:record.messageId};
     }
     if(existing){
       try{
+        if(stale())return {messageId:existing};
         await channel.updateCard(existing,payload);
+        rememberShown(id,payload);
         presented.set(id,signature);
+        if(final)releaseSegment(id);
         return {messageId:existing};
       }catch(error){
         if(error?.status!==404&&error?.statusCode!==404)throw error;
@@ -330,9 +400,12 @@ export async function createTransport({config,credentials,signal,receive,state,d
     }
     if(streaming&&kitApi&&!kitDisabled){
       try{
+        if(stale())return {messageId:null};
         const created=await kitApi.create(origin,payload);
         kitRecords.set(id,created);
+        rememberShown(id,payload);
         progress.set(id,created.messageId);presented.set(id,signature);
+        if(final)releaseSegment(id);
         return {messageId:created.messageId};
       }catch(error){
         // Fallback is safe only when card.create failed BEFORE any IM send.
@@ -342,11 +415,63 @@ export async function createTransport({config,credentials,signal,receive,state,d
       }
     }
     checkAbort(signal);
+    if(stale())return {messageId:null};
     const sent=await channel.send(origin.conversationId,{card:payload},sendOptions(origin));
+    rememberShown(id,payload);
     progress.set(id,sent.messageId);presented.set(id,signature);
+    if(final)releaseSegment(id);
     return sent;
   }
-  const present=async(origin,body,actions=[],options)=>presentPayload(origin,card(await presentation(body),actions,options),{streaming:(options?.mode==='progress'||options?.mode==='partial')&&!actions.length&&body.final!==true});
+  /** Freeze the card a steered Turn was using, so the next segment opens a new card. */
+  const freezePayload=payload=>{
+    if(!payload||typeof payload!=='object')return null;
+    const next=JSON.parse(JSON.stringify(payload));
+    const title=next.header?.title;
+    if(title&&typeof title.content==='string'&&!title.content.includes('已切换至新消息'))title.content=title.content+' · 已切换至新消息';
+    const first=next.body?.elements?.[0];
+    if(first&&typeof first.content==='string')first.content=first.content+'\n\n⏸ 后续内容见下方';
+    return next;
+  };
+  function cutProgress(options={}){
+    if(!options.previousOrigin)return Promise.resolve({frozen:false});
+    const id=key(options.previousOrigin);
+    return runCut(id,()=>freezeSegment(options));
+  }
+  async function freezeSegment({previousOrigin}={}){
+    if(!previousOrigin)return {frozen:false};
+    const startedAt=Date.now();
+    const report=(state,code)=>diagnostic?.('info','channel.steer-cut',{state,code,durationMs:Date.now()-startedAt});
+    const id=key(previousOrigin);
+    // Bump the generation before any remote call: in-flight updates must not land.
+    bumpSegment(id);
+    const record=kitRecords.get(id);
+    const cardMessageId=progress.get(id); // Robot-issued progress card, never the incoming user message.
+    const frozen=freezePayload(segmentOf(id).shown);
+    progress.delete(id);presented.delete(id);
+    if(!record){
+      let patched=false;
+      if(frozen&&cardMessageId){
+        try{await channel.updateCard(cardMessageId,frozen);patched=true;}
+        catch(error){
+          cardNotice('旧兼容卡片封版失败：'+(error?.code??'unknown'),error?.code);
+          report('failed','patch-error');
+          return {frozen:false,closed:false,synthetic:true};
+        }
+      }
+      segments.delete(id);
+      report('ok',patched?'patched':'empty');
+      return {frozen:patched,synthetic:true};
+    }
+    let closed=false;
+    try{await kitApi.close(record);closed=true;}
+    catch(error){cardNotice('原卡片停止流式失败：'+(error?.code??'unknown'),error?.code);}
+    if(frozen)await kitApi.update(record,frozen).catch(error=>cardNotice('原卡片封版失败：'+(error?.code??'unknown'),error?.code));
+    if(closed&&!record.streaming)kitRecords.delete(id);
+    segments.delete(id);
+    report('ok',!frozen?'empty':closed?'frozen':'frozen-unclosed');
+    return {frozen:!!frozen,closed};
+  }
+  const present=async(origin,body,actions=[],options)=>presentPayload(origin,card(await presentation(body),actions,options),{streaming:(options?.mode==='progress'||options?.mode==='partial')&&!actions.length&&body.final!==true,final:body.final===true});
   let closing;const close=()=>closing??=(async()=>{signal.removeEventListener('abort',onAbort);disposers.splice(0).forEach(dispose=>dispose());await channel.disconnect();progress.clear();presented.clear();kitRecords.clear();questionCards.clear();questionContexts.clear();})();
   const onAbort=()=>{void close().catch(()=>{});};signal.addEventListener('abort',onAbort,{once:true});
   return {
@@ -355,6 +480,7 @@ export async function createTransport({config,credentials,signal,receive,state,d
     showPublicDrafts:config.streaming.mode==='progress'&&config.streaming.progress.draft,
     start:()=>channel.connect(),
     details:()=>({feishuCardEngine:kitRecords.size?'CardKit':kitDisabled?'兼容模式（CardKit 不可用）':config.streaming.cardEngine==='patch'?'兼容模式':'CardKit 待首次流式创建'}),
+    cutProgress,
     close,
     progress:config.streaming.mode!=='off'?(origin,body)=>present(origin,body,[],config.streaming):undefined,
     async send(origin,body){
@@ -386,7 +512,7 @@ export async function createTransport({config,credentials,signal,receive,state,d
       let result;
       for(let i=0;i<cards.length;i++){
         checkAbort(signal);
-        if(i===0&&!hasDrafts)result=await presentPayload(origin,cards[i]);
+        if(i===0&&!hasDrafts)result=await presentPayload(origin,cards[i],{final:true});
         else{
           const sent=await channel.send(origin.conversationId,{card:cards[i]},sendOptions(origin));
           result??=sent;
@@ -465,8 +591,9 @@ export async function createTransport({config,credentials,signal,receive,state,d
       for(const resource of message.resources){
         checkAbort(uploadSignal);
         const response=await channel.rawClient.im.v1.messageResource.get({path:{message_id:message.messageId,file_key:resource.fileKey},params:{type:resource.type==='image'?'image':'file'}});
-        const data=response.getReadableStream();
-        const uploaded=await fileUploads.uploadStream({sessionId,data:boundedBytes(data,config.maxAttachmentMB*1024*1024,uploadSignal),signal:uploadSignal,name:resource.fileName??(resource.type==='image'?'image.png':'attachment')});
+        let data=response.getReadableStream(),name=resource.fileName;
+        if(!name&&resource.type==='image'){const sniffed=await sniffImage(data);data=sniffed.data;name=sniffed.name;}
+        const uploaded=await fileUploads.uploadStream({sessionId,data:boundedBytes(data,config.maxAttachmentMB*1024*1024,uploadSignal),signal:uploadSignal,name:name??(resource.type==='image'?'image.png':'attachment')});
         files.push(uploaded);
       }
       return files;

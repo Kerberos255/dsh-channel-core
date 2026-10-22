@@ -9,6 +9,30 @@ This file holds historical behavior notes formerly embedded in README. For curre
 - Added one model-facing read-only tool, `channel_outbound_records`, and a Session-scoped archive viewer. The temporary news-only model tool is not registered.
 - Added regressions for multiple sources, Discord, pagination, idempotency, authorization and source integrity; no local news tokens or bindings are published.
 
+## 0.5.3
+
+- Feishu image uploads now name the stored file after its real bytes (WebP, PNG, JPEG, GIF) instead of always writing `image.png`; an explicit Feishu file name still wins.
+- A freshly split segment no longer opens a card that only carries the "thinking" status; Ask User keeps its reset snapshot.
+- Cards replaced during a Turn are retired when the Turn ends, so a card created just after a cut cannot stay stuck on "thinking" forever.
+
+## 0.5.2
+
+- Freezing the previous card no longer occupies the per-conversation send queue, so the continuation card starts streaming immediately instead of waiting for the old card to close.
+- Card freezing is serialized per card id inside the transport, keeping CardKit sequences ordered when two interjections arrive back to back.
+
+## 0.5.1
+
+- Card segments now have a single lifetime record (generation plus last visible payload), bounded to the most recent entries and released once the final answer is delivered; this replaces the two unbounded maps.
+- Final delivery slices by the same segment boundary as the live card, so an interjection never repeats text already shown on a frozen card.
+- `cutProgress` reports a structured `channel.steer-cut` diagnostic (`state`, `code`, `durationMs`, no message content) with distinct codes for empty, patched, frozen and frozen-unclosed outcomes.
+
+## 0.5.0
+
+- Feishu: a native Steer that claims another input inside the same Turn now freezes the card that was already streaming (marked "已切换至新消息") and continues on a new card anchored to the newest user message; the final answer follows that same anchor.
+- Timeline entries carry a monotonic sequence, so a segment cut stays correct after the 60-entry rollover; stream, reasoning and commentary cursors are captured with the cut.
+- A CardKit generation guard stops in-flight card updates from landing after a cut, and the frozen card keeps its record when closing the stream fails.
+- Discord behaviour is unchanged: steering still updates one progress card and replies once.
+
 ## 0.4.89
 
 - Card-level degradation (question-card retirement, CardKit fallbacks, progress-card updates) now records a structured `channel.card-degraded` diagnostic instead of a channel status error, so connection health no longer reports display fallbacks as channel failures.

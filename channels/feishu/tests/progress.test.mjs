@@ -340,6 +340,24 @@ function fakeCardKit(overrides={}){
  return {calls,rawClient};
 }
 
+test('cutProgress freezes the CardKit card and the next segment opens a new one',async()=>{
+ const kit=fakeCardKit(),f=fixture({mode:'progress',progress:{narration:true}},{rawClient:kit.rawClient}),t=await f.create();
+ try{
+  const base={sessionId:'session',status:'thinking',activity:{timeline:[{type:'draft',text:'第一段'}]}};
+  await t.progress(origin,base);
+  const before=kit.calls.length;
+  const cut=await t.cutProgress({previousOrigin:origin});
+  assert.equal(cut.frozen,true);
+  assert.deepEqual(kit.calls.slice(before).map(c=>c.type),['kit-settings','kit-update'],'close streaming, then freeze the visible payload');
+  const frozen=JSON.parse(kit.calls.at(-1).request.data.card.data);
+  assert.match(frozen.header.title.content,/已切换至新消息/);
+  assert.match(frozen.body.elements[0].content,/后续内容见下方/);
+  const afterCut=kit.calls.length;
+  await t.progress(origin,{...base,activity:{timeline:[{type:'draft',text:'第二段'}]}});
+  assert.deepEqual(kit.calls.slice(afterCut).map(c=>c.type),['kit-create','kit-reply'],'the continuation opens a new card instead of editing the frozen one');
+ }finally{await t.close()}
+});
+
 test('CardKit is the default Feishu engine, with an explicit IM Patch compatibility mode',()=>{
  assert.equal(schema.defaults.streaming.cardEngine,'cardkit');
  assert.equal(schema.validate({streaming:{cardEngine:'patch'}}).streaming.cardEngine,'patch');
@@ -815,4 +833,32 @@ test('Feishu question timeout updates the interactive card without pretending th
   assert.equal(update.payload.header.title.content,'Agent · 已失效');
   assert.equal(update.payload.body.elements.length,1);
  }finally{await t.close();}
+});
+
+
+test('steer freeze in Patch mode updates the robot card id, never the user message id',async()=>{
+  const f=fixture({mode:'progress',cardEngine:'patch'}),t=await f.create();
+  try{
+    await t.progress(origin,{status:'generating',activity:{timeline:[{type:'public-draft',text:'原先的进度'}]}});
+    assert.equal(f.calls[0].type,'send');
+    const cut=await t.cutProgress({previousOrigin:origin});
+    assert.equal(cut.frozen,true);
+    const patch=f.calls.find(c=>c.type==='update');
+    assert(patch);
+    assert.equal(patch.id,'card-1');
+    assert.notEqual(patch.id,origin.messageId);
+    assert.match(patch.payload.header.title.content,/已切换至新消息/);
+    assert.match(patch.payload.body.elements[0].content,/后续内容见下方/);
+  }finally{await t.close();}
+});
+
+test('steer freeze reports failed Patch edit instead of a false success',async()=>{
+  const f=fixture({mode:'progress',cardEngine:'patch'},{failUpdate:500}),t=await f.create();
+  try{
+    await t.progress(origin,{status:'generating',activity:{timeline:[{type:'public-draft',text:'原先的进度'}]}});
+    const cut=await t.cutProgress({previousOrigin:origin});
+    assert.equal(cut.frozen,false);
+    assert.equal(cut.closed,false);
+    assert.equal(f.calls.find(c=>c.type==='update')?.id,'card-1');
+  }finally{await t.close();}
 });
