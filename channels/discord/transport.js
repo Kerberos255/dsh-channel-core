@@ -30,7 +30,15 @@ export const slashCommands=[
 ];
 const slashCommandNames=new Set(slashCommands.map(item=>item.name));
 function interactionMessage(interaction,config,text){const thread=interaction.channel?.isThread?.();return {provider:'discord',accountId:config.accountId,conversationId:thread?interaction.channel.parentId:interaction.channelId,threadId:thread?interaction.channelId:undefined,userId:interaction.user.id,messageId:'interaction:'+interaction.id,kind:interaction.guildId?(thread?'thread':'group'):'dm',text,attachments:[],resources:[],timestamp:Math.trunc(interaction.createdTimestamp??Date.now()),mentionedBot:true};}
-export async function createTransport({config,credentials,signal,receive,state,action,sessions,host,statusPanel},sdkOverride){
+/** Normalise a gateway close so "Discord hung up" (4000/4001/4004) can be told
+ *  apart from "the connection broke" (1006) without leaking tokens or payloads. */
+export const closeDetail=(event,readyAtMs,now=Date.now())=>{
+  const code=Number.isInteger(event?.code)?event.code:null;
+  const raw=event?.reason;
+  const reason=typeof raw==='string'&&raw.trim()?raw.trim().slice(0,120):null;
+  return {code,reason,uptimeMs:Number.isFinite(readyAtMs)?Math.max(0,now-readyAtMs):null};
+};
+export async function createTransport({config,credentials,signal,receive,state,diagnostic,action,sessions,host,statusPanel},sdkOverride){
   const sdk=sdkOverride??await import('discord.js');
   const client=new sdk.Client({intents:[sdk.GatewayIntentBits.Guilds,sdk.GatewayIntentBits.GuildMessages,sdk.GatewayIntentBits.DirectMessages,sdk.GatewayIntentBits.MessageContent],partials:[sdk.Partials.Channel],
     rest:{timeout:15000,retries:0},makeCache:sdk.Options.cacheWithLimits({MessageManager:0,ThreadManager:100,GuildMemberManager:0,PresenceManager:0})});
@@ -167,10 +175,24 @@ export async function createTransport({config,credentials,signal,receive,state,a
       if(interaction.deferred||interaction.replied)await interaction.followUp(body).catch(()=>{});else await interaction.reply(body).catch(()=>{});
     }
   });
-  on('error',()=>state('Discord 连接发生错误'));
+  let lastCloseAt=null;
+  on('error',error=>{
+    diagnostic?.('warn','channel.discord-error',{code:Number.isInteger(error?.code)?error.code:null,name:String(error?.name??'').slice(0,48)});
+    state('Discord 连接发生错误');
+  });
   on('shardReconnecting',()=>state('Discord 正在重连…',false));
-  on('shardDisconnect',()=>state('Discord 连接已断开，等待重连…',false));
-  on('shardResume',()=>state('Discord 已重新连接',true));
+  on('shardDisconnect',(event,shardId)=>{
+    const detail=closeDetail(event,client.readyAt?.getTime());
+    lastCloseAt=Date.now();
+    // A close code is the only way to separate a Discord-side close from a
+    // broken transport; keep it structured and never surface raw payloads.
+    diagnostic?.('warn','channel.discord-close',{...detail,shardId:Number.isInteger(shardId)?shardId:null});
+    state(detail.code===null?'Discord 连接已断开，等待重连…':`Discord 连接已断开（关闭码 ${detail.code}），等待重连…`,false);
+  });
+  on('shardResume',()=>{
+    diagnostic?.('info','channel.discord-resume',{gapMs:lastCloseAt===null?null:Date.now()-lastCloseAt});
+    state('Discord 已重新连接',true);
+  });
   on('clientReady',()=>state('Discord 已连接',true));
   async function channelFor(origin){checkAbort(signal);const channel=await client.channels.fetch(origin.threadId??origin.conversationId);if(!channel?.isTextBased())throw Object.assign(new Error('channel-unavailable'),{definitelyNotSent:true});return channel;}
   const typing=new Map();

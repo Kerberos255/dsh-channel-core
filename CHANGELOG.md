@@ -2,6 +2,11 @@
 
 This file holds historical behavior notes formerly embedded in README. For current setup and behavior, start with [README.md](README.md) or [简体中文](README.zh-CN.md).
 
+## 0.5.4
+
+- Record the Discord gateway close code, reason and connection uptime as `channel.discord-close`, and the reconnect gap as `channel.discord-resume`. A Discord-side close (4000/4001/4004) is now distinguishable from a broken transport (1006) without inspecting logs by hand.
+- Discord transport now receives the shared `diagnostic` sink (Feishu already did); the user-facing status text only gains the close code.
+
 ## 0.4.70 (2026-10-18)
 
 - Generalized proactive outbound archives from a Feishu news-only path to any Session-bound Feishu/Discord send using Channel Core's authorized outbound API.
