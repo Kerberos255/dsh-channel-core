@@ -2,6 +2,15 @@
 
 This file holds historical behavior notes formerly embedded in README. For current setup and behavior, start with [README.md](README.md) or [简体中文](README.zh-CN.md).
 
+## 0.6.0
+
+- `/new` now migrates the active Scheduler tasks of the old Session to its successor and archives the old Session strictly, instead of leaving the tasks behind and detached. Admission rejects a busy Session, a pending question, an unconfirmed inbound message, or a task firing within 90 seconds; migration creates before deleting so an interruption cannot lose a task; `inactive` tasks are never recreated; an uncertain create stops the run instead of retrying.
+- Retired routes are recorded in `route_history`, and outbound delivery falls back to them when a Session no longer owns a binding. The fallback requires an identical `binding_key` and scope and re-runs every existing permission check; it preserves a route, it does not grant a new one.
+- Added automatic Session-log rotation driven by file size, with quiet-condition checks, per-Session failure cooldown, and owner DMs left to LCM. Channel Sessions rotate by migrating and archiving; Sessions without a binding get a successor and an archived predecessor.
+- Fixed: the Workspace registry is resolved as `workspaceRegistry` (the package name `workspace` is not a service). The previous name made archiving throw after tasks had already migrated, so `/new` reported failure although the binding had already moved.
+- `channel_send` now documents `bindingId` as optional and reports a wrong id as "omit it and retry" with the available bindings, instead of "no authorized binding" — that message made a model look for another delivery route.
+- Ask User diagnostics gained enumerated `reason`, `stage`, `ageSeconds` and `questionVersion`, and a card that is never published now fails fast instead of leaving the request waiting for the ten-minute timeout.
+
 ## 0.5.4
 
 - Record the Discord gateway close code, reason and connection uptime as `channel.discord-close`, and the reconnect gap as `channel.discord-resume`. A Discord-side close (4000/4001/4004) is now distinguishable from a broken transport (1006) without inspecting logs by hand.

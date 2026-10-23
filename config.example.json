@@ -3,5 +3,10 @@
   "defaultMode": "steering",
   "sharedDM": true,
   "taskNotifications": false,
-  "notificationChannel": "none"
+  "notificationChannel": "none",
+  "rotationMode": "auto",
+  "rotationFileMiB": 20,
+  "rotationIdleMinutes": 360,
+  "rotationScanMinutes": 10,
+  "rotationExcludeOwnerDm": true
 }

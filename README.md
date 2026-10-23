@@ -87,3 +87,41 @@ Feishu CardKit final replies retry closing/updating **the same existing card** o
 The global `channel_send` tool only delivers messages; it does not offer news history tools, outbound archive queries, or news system prompt injection. A private transport ledger retains delivery state, remote IDs and idempotency keys to avoid duplicates.
 
 To retain recurring results in a native Session, use the Host's built-in DSH Schedule bound to that Session. Each run creates a normal model turn and its reply becomes part of the ordinary Session history. This incurs a model call, unlike zero-LLM direct pushes; historical search uses standard Session / LCM abilities rather than a bespoke news tool.
+
+## `/new` and scheduled-task migration
+
+Running `/new` in a channel Session does more than switch the binding: it migrates the **active** Scheduler tasks of the old Session to the successor, then archives the old Session strictly.
+
+Admission checks run first, and any failure aborts with no change at all: the Session is idle, no question or approval is pending, no inbound message is unconfirmed, and no task fires within 90 seconds.
+
+Ordering and boundaries:
+
+- **Create then delete, one task at a time.** An old task is removed only after its replacement exists, so an interrupted migration cannot lose it.
+- **`inactive` tasks are never recreated.** Rebuilding a completed one-shot reminder would fire it again immediately, so it stays in the old Session and is listed in the reply.
+- **An uncertain result stops the run.** If a create succeeds but the response is lost, the old task is kept and no retry happens, because a second create would leave two live copies.
+- **Strict archive only.** `stopActivity: true` makes the Host delete the Session's remaining tasks; the plugin never uses it.
+- **Honest reporting.** The reply states how many tasks migrated, skipped or failed, and whether the old Session was archived — partial completion is never reported as success.
+
+`/session` switching deliberately does **not** migrate tasks: its meaning is returning to an earlier Session to continue.
+
+### Delivery fallback for a detached Session
+
+After a binding moves to a successor, a task still running in the old Session (an aborted migration, or an LCM rotation) can still deliver through `channel_send` by following the recorded route history. The `binding_key` and scope must match exactly, and channel settings, DM permissions and group allowlists are re-checked as usual — this preserves an existing route, it never grants a new one.
+
+## Automatic Session-log rotation
+
+Native Session logs only grow. The plugin scans them by size and rotates when a log passes the threshold and every quiet condition holds.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `rotationMode` | `auto` | `off` observes without acting |
+| `rotationFileMiB` | `20` | Rotation threshold in MiB |
+| `rotationIdleMinutes` | `360` | Required idle time after the last turn |
+| `rotationScanMinutes` | `10` | Scan interval |
+| `rotationExcludeOwnerDm` | `true` | Verified owner DMs stay with LCM to avoid double rotation |
+
+Rotation requires all of: log over threshold, Session idle, no turn in progress, no pending question, no unconfirmed inbound message, no migration in flight, and no failure cooldown.
+
+- **Channel Sessions** migrate their tasks, switch the binding, archive strictly, and post a short notice.
+- **Sessions without a binding (Web)** get a successor Session and an archived predecessor. DSH exposes no way for a plugin to activate a client, so a browser tab does not follow; archiving also does not prevent further use, and input into the archived Session keeps growing its log.
+- **Failure cooldown**: six hours before another attempt, extended after three consecutive failures, so a broken archive is never retried on every scan.

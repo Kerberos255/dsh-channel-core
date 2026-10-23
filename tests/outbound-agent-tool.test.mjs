@@ -12,7 +12,7 @@ function registered(){
  installOutboundAgentTool(ctx,core);
  return {tool,calls};
 }
-const exec={agent:{session:{id:SESSION,header:{cwd:'E:/dsh/workspaces/xiaohujing'}}},callId:'call-1',signal:new AbortController().signal};
+const exec={agent:{session:{id:SESSION,header:{cwd:'workspace-root'}}},callId:'call-1',signal:new AbortController().signal};
 test('channel_send is the only model-facing channel tool; no news history or prompt is injected',async()=>{
  const {tool,calls}=registered();
  assert.equal(tool.name,'channel_send');
@@ -26,8 +26,8 @@ test('channel_send is the only model-facing channel tool; no news history or pro
  assert.deepEqual(await tool.execute({imagePath:'_scratch/photo.png',idempotencyKey:'photo-1'},exec),{id:'sent-1',state:'sent'});
  assert.deepEqual(calls,[
   {sessionId:SESSION,bindingId:undefined,text:'Hello',idempotencyKey:'call-1',source:'agent'},
-  {sessionId:SESSION,bindingId:undefined,text:'',filePath:'_scratch/report.pdf',workspacePath:'E:/dsh/workspaces/xiaohujing',idempotencyKey:'call-1',source:'agent'},
-  {sessionId:SESSION,bindingId:undefined,text:'',imagePath:'_scratch/photo.png',workspacePath:'E:/dsh/workspaces/xiaohujing',idempotencyKey:'photo-1',source:'agent'}
+  {sessionId:SESSION,bindingId:undefined,text:'',filePath:'_scratch/report.pdf',workspacePath:'workspace-root',idempotencyKey:'call-1',source:'agent'},
+  {sessionId:SESSION,bindingId:undefined,text:'',imagePath:'_scratch/photo.png',workspacePath:'workspace-root',idempotencyKey:'photo-1',source:'agent'}
  ]);
 });
 test('tool refuses missing Session and empty request',async()=>{
