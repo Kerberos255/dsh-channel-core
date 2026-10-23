@@ -123,5 +123,7 @@ Native Session logs only grow. The plugin scans them by size and rotates when a 
 Rotation requires all of: log over threshold, Session idle, no turn in progress, no pending question, no unconfirmed inbound message, no migration in flight, and no failure cooldown.
 
 - **Channel Sessions** migrate their tasks, switch the binding, archive strictly, and post a short notice.
-- **Sessions without a binding (Web)** get a successor Session and an archived predecessor. DSH exposes no way for a plugin to activate a client, so a browser tab does not follow; archiving also does not prevent further use, and input into the archived Session keeps growing its log.
+- **Sessions without a channel binding** are **reported only, never acted on**. A binding-less Session is not necessarily a Web Session: it may be a desktop Session, a CLI Session, or one owned by another plugin, and the plugin cannot reliably tell them apart. It therefore creates no successor and archives nothing, leaving the decision to the user.
 - **Failure cooldown**: six hours before another attempt, extended after three consecutive failures, so a broken archive is never retried on every scan.
+
+Before rotating, the native header of the old Session is read asynchronously. If the workspace or preset cannot be read, the rotation is abandoned and cooled down rather than falling back to a default path.

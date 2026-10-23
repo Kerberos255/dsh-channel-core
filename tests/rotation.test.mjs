@@ -27,7 +27,7 @@ function workspace(sessions) {
   return home;
 }
 
-function fixture({ sessions = [], config = {}, tasks = [], bindings = [], ownerDm = false, archiveThrows = false } = {}) {
+function fixture({ sessions = [], config = {}, tasks = [], bindings = [], archiveThrows = false, noHeader = false } = {}) {
   const home = workspace(sessions);
   const store = new CoreStore(':memory:');
   const archived = [];
@@ -39,7 +39,7 @@ function fixture({ sessions = [], config = {}, tasks = [], bindings = [], ownerD
       const row = { id: 'schedule-' + randomUUID().slice(0, 8), sessionId, status: 'active', title: input.title, kind: 'cron', expression: input.cron?.expression, scheduledAt: new Date(Date.now() + 3600_000).toISOString() };
       live.push(row); return row;
     },
-    async delete({ sessionId, id }) { const i = live.findIndex(r => r.id === id && r.sessionId === sessionId); if (i >= 0) live.splice(i, 1); },
+    async delete({ sessionId, id }) { const i = live.findIndex(r => r.id === id && r.sessionId === sessionId); if (i >= 0) live.splice(i, 1); return { id, deleted: true }; },
   };
   const ctx = {
     dshHomePath: (...parts) => path.join(home, ...parts),
@@ -47,7 +47,14 @@ function fixture({ sessions = [], config = {}, tasks = [], bindings = [], ownerD
       if (name === 'schedule') return schedule;
       if (name === 'workspaceRegistry') return { async archiveSession(id) { if (archiveThrows) throw Object.assign(new Error('busy'), { name: 'WorkspaceActiveSessionError' }); archived.push(id); } };
       if (name === 'agents') return { get: () => undefined };
-      if (name === 'sessionQuery') return { observeSession: () => ({ header: { cwd: home, agentPreset: 'agent' }, [Symbol.dispose]() {} }) };
+      // The Host API is async; a synchronous fake hid a real bug once already.
+      if (name === 'sessionQuery') return {
+        async observeSession() {
+          return noHeader
+            ? { header: null }
+            : { header: { cwd: home, agentPreset: 'agent' }, [Symbol.dispose]() {} };
+        },
+      };
       if (name === 'pluginDiagnostics') return { record() {} };
       return undefined;
     },
@@ -89,6 +96,9 @@ test('a channel session with active tasks migrates them and archives', async () 
   assert.equal(f.live.filter(r => r.sessionId === sessionId).length, 0);
   assert.equal(f.live.filter(r => r.sessionId !== sessionId).length, 1);
   assert.equal(f.created.length, 1);
+  // The successor must inherit the real workspace and preset, not a default.
+  assert.equal(f.created[0].cwd, f.home);
+  assert.equal(f.created[0].agentPreset, 'agent');
 });
 
 test('a fresh log is skipped until the idle window passes', async () => {
@@ -103,38 +113,39 @@ test('an owner DM is left to LCM', async () => {
   const sessionId = 'session-dm';
   const f = fixture({ sessions: [aged(sessionId)], bindings: [{ key: 'route-dm', sessionId, kind: 'dm' }] });
   const rotation = new SessionRotation(f.core);
-  const entry = rotation.scan().find(row => row.sessionId === sessionId);
   assert.equal(rotation.isOwnerDm(rotation.bindingsOf(sessionId)), true);
   await rotation.tick();
   assert.equal(f.archived.length, 0, 'LCM owns owner DMs');
-  assert(entry);
 });
 
-test('a session without bindings is archived without switching', async () => {
+test('a session without bindings is only reported, never archived', async () => {
+  // A binding-less Session is not necessarily a Web Session: it may be desktop,
+  // CLI, or owned by another plugin. Rotating it could destroy live work.
   const sessionId = 'session-web';
   const f = fixture({ sessions: [aged(sessionId)] });
   const rotation = new SessionRotation(f.core);
   await rotation.tick();
-  assert.deepEqual(f.archived, [sessionId]);
-  assert.equal(f.created.length, 1, 'a successor session is created for the next launch');
+  assert.equal(f.archived.length, 0, 'binding-less sessions must never be archived automatically');
+  assert.equal(f.created.length, 0, 'no successor is created for them either');
 });
 
 test('rotationMode off does nothing', async () => {
   const sessionId = 'session-off';
-  const f = fixture({ sessions: [aged(sessionId)], config: { rotationMode: 'off' } });
+  const f = fixture({ sessions: [aged(sessionId)], bindings: [{ key: 'route-1', sessionId }], config: { rotationMode: 'off' } });
   const rotation = new SessionRotation(f.core);
   await rotation.tick();
   assert.equal(f.archived.length, 0);
   assert.equal(f.created.length, 0);
 });
 
-test('a failure cools the session down instead of retrying every pass', async () => {
-  const sessionId = 'session-fail';
-  const f = fixture({ sessions: [aged(sessionId)], archiveThrows: true });
+test('an unreadable Session header fails closed and cools down', async () => {
+  const sessionId = 'session-noheader';
+  const f = fixture({ sessions: [aged(sessionId)], bindings: [{ key: 'route-1', sessionId }], noHeader: true });
   const rotation = new SessionRotation(f.core);
   await rotation.tick();
-  assert(rotation.cooldown.has(sessionId), 'failed session enters a cooldown window');
-  assert(f.core.store.db.prepare('SELECT COUNT(*) AS c FROM audit WHERE kind=?').get('session-rotation').c >= 1, 'failure is audited');
+  assert.equal(f.created.length, 0, 'no successor may be created without a verified workspace');
+  assert.equal(f.archived.length, 0);
+  assert(rotation.cooldown.has(sessionId), 'the session enters a cooldown window');
   const before = f.created.length;
   await rotation.tick();
   assert.equal(f.created.length, before, 'second pass must not retry during cooldown');
@@ -142,9 +153,10 @@ test('a failure cools the session down instead of retrying every pass', async ()
 
 test('an archive refusal is reported without losing the new session', async () => {
   const sessionId = 'session-archive-refused';
-  const f = fixture({ sessions: [aged(sessionId)], archiveThrows: true });
+  const f = fixture({ sessions: [aged(sessionId)], bindings: [{ key: 'route-1', sessionId }], tasks: [], archiveThrows: true });
   const rotation = new SessionRotation(f.core);
   const entry = rotation.scan().find(row => row.sessionId === sessionId);
-  await rotation.rotate(entry);
+  const outcome = await rotation.rotate(entry);
   assert.equal(f.created.length, 1);
+  assert.equal(outcome.archived.ok, false);
 });

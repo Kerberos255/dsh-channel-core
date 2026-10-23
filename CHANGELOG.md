@@ -2,6 +2,15 @@
 
 This file holds historical behavior notes formerly embedded in README. For current setup and behavior, start with [README.md](README.md) or [简体中文](README.zh-CN.md).
 
+## 0.6.1
+
+- Fixed: the Host Session query is asynchronous. Rotation now awaits `observeSession` instead of reading a Promise, which had silently produced an undefined `cwd` and would have created successor Sessions in the wrong workspace. An unreadable header now fails closed and cools the Session down instead of falling back to a default path.
+- A `/new` that leaves any task unmigrated no longer switches the binding or archives the old Session; it reports `migration-incomplete` and keeps everything where it was.
+- When deleting an old task fails, the newly created copy is removed, because two live tasks would run the same side-effecting script twice. Only an unrecoverable state is reported as duplicate risk.
+- `schedule.delete()` results are checked: `deleted:false` is recorded as absent rather than as a successful migration, and a create without a confirmed id is never counted as success.
+- `rebindScope` accepts the expected binding revisions and performs a per-row compare-and-set inside the transaction, rolling back the whole move if anything changed concurrently.
+- Automatic rotation no longer archives Sessions without a channel binding. A binding-less Session may be a desktop, CLI or third-party Session and the plugin cannot distinguish them, so such Sessions are only reported.
+
 ## 0.6.0
 
 - `/new` now migrates the active Scheduler tasks of the old Session to its successor and archives the old Session strictly, instead of leaving the tasks behind and detached. Admission rejects a busy Session, a pending question, an unconfirmed inbound message, or a task firing within 90 seconds; migration creates before deleting so an interruption cannot lose a task; `inactive` tasks are never recreated; an uncertain create stops the run instead of retrying.

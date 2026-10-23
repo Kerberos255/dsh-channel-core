@@ -49,10 +49,13 @@ function fixture({ tasks = [], agentStatus, failCreate, uncertainCreate, failDel
       return row;
     },
     async delete({ sessionId, id }) {
-      if (failDelete) { const e = new Error('nope'); e.code = 'delete-failed'; throw e; }
+      // Only the old Session's deletion fails; removing the freshly created copy
+      // must still work, which is exactly the compensation path under test.
+      if (failDelete && sessionId === previous) { const e = new Error('nope'); e.code = 'delete-failed'; throw e; }
       const index = live.findIndex(row => row.id === id && row.sessionId === sessionId);
       if (index >= 0) live.splice(index, 1);
       calls.deleted.push({ sessionId, id });
+      return { id, deleted: true };
     },
   };
 
@@ -145,14 +148,14 @@ test('an unconfirmed inbound message blocks the switch', async () => {
   await assert.rejects(run(f), { code: 'pending-input' });
 });
 
-test('a failed create keeps the old task and reports it', async () => {
+test('a failed create blocks the route switch and keeps the old task', async () => {
   const f = fixture({ tasks: [task()], failCreate: true });
-  const outcome = await run(f);
-  assert.equal(outcome.migrated.length, 0);
-  assert.equal(outcome.failed.length, 1);
-  assert.equal(outcome.failed[0].code, 'create-failed');
+  await assert.rejects(run(f), { code: 'migration-incomplete' });
   assert.equal(f.calls.deleted.length, 0, 'old task must survive a failed create');
   assert.equal(f.live.length, 1);
+  assert.equal(f.store.db.prepare('SELECT session_id FROM bindings').get().session_id, previous,
+    'a partial migration must never move the binding');
+  assert.equal(f.archived.length, 0, 'and must never archive the old Session');
 });
 
 test('an uncertain create stops the migration and keeps the old task', async () => {
@@ -163,12 +166,14 @@ test('an uncertain create stops the migration and keeps the old task', async () 
   assert.equal(f.store.db.prepare('SELECT session_id FROM bindings').get().session_id, previous, 'binding must not switch');
 });
 
-test('a failed delete is reported as duplicate risk, not silently retried', async () => {
+test('a failed delete is compensated by removing the new copy', async () => {
+  // Two live tasks would run the same side-effecting script twice, so the copy
+  // created moments earlier is removed instead of being left behind.
   const f = fixture({ tasks: [task()], failDelete: true });
-  const outcome = await run(f);
-  assert.equal(outcome.migrated.length, 0);
-  assert.equal(outcome.failed[0].duplicateRisk, true);
-  assert.equal(f.live.length, 2, 'both copies exist and are reported');
+  await assert.rejects(run(f), { code: 'migration-incomplete' });
+  assert.equal(f.live.filter(r => r.sessionId === previous).length, 1, 'old task survives');
+  assert.equal(f.live.filter(r => r.sessionId !== previous).length, 0, 'the new copy is reverted');
+  assert.equal(f.store.db.prepare('SELECT session_id FROM bindings').get().session_id, previous);
 });
 
 test('a binding change during migration aborts before switching traffic', async () => {
