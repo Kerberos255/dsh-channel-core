@@ -30,7 +30,11 @@ Feishu supports CardKit component streaming with an IM-card fallback. Draft and 
 
 On both channels, a submitted Ask User question becomes a read-only receipt of the question and selected or custom answer, with interactive controls removed. Previously committed context remains visible and is not re-sent as a duplicate answer.
 
-Discord uses flat `/new`, `/stop`, `/status`, `/session`, `/answer`, `/prompt`, `/model`, `/think` commands. Feishu supports text `/new`, `/stop`, `/status`, `/session`, `/answer`, `/model`, `/think`. Model selection is constrained to available models and takes effect from the next turn; ambiguous provider selections present candidates.
+Discord uses flat `/new`, `/stop`, `/status`, `/session`, `/answer`, `/model`, `/think`, `/reason` commands. Feishu supports text `/new`, `/stop`, `/status`, `/session`, `/answer`, `/model`, `/think`, `/reason`. Model selection is constrained to available models and takes effect from the next turn; ambiguous provider selections present candidates.
+
+`/reason` toggles "show thinking". It edits the same `streaming.progress.narration` setting the plugin page owns, so both entry points always agree. Without an argument it reports the current state; `/reason on` and `/reason off` switch it. The setting is connection-level, so the channel reconnects briefly before it takes effect.
+
+**Every incoming channel message carries a local date prefix** (`[2026-10-27 Tue 11:30] text`), built from the channel's own message timestamp in the machine's time zone. The model has no clock and the Host runtime context carries no time, so without this prefix it infers dates from conversation content. The prefix goes only at the front of the newest message, leaving the cached prompt prefix untouched; command messages are never stamped and the idempotency payload stays exactly as received.
 
 ## Install
 

@@ -31,7 +31,11 @@ Discord 将思考、草稿和工具进度显示在滚动进度消息中。原生
 
 两个渠道在 Ask User 回答提交后，原提问卡片变为包含问题与用户答案的只读回执，并移除可操作按钮。已发布的前文继续可见，不应在后续回复中重复发送。
 
-Discord 提供平铺的 `/new`、`/stop`、`/status`、`/session`、`/answer`、`/prompt`、`/model`、`/think` 命令；飞书提供文本 `/new`、`/stop`、`/status`、`/session`、`/answer`、`/model`、`/think`。模型切换只在下一轮生效；同一 Provider 有多个模型时列出候选，不会随意猜选。
+Discord 提供平铺的 `/new`、`/stop`、`/status`、`/session`、`/answer`、`/model`、`/think`、`/reason` 命令；飞书提供文本 `/new`、`/stop`、`/status`、`/session`、`/answer`、`/model`、`/think`、`/reason`。模型切换只在下一轮生效；同一 Provider 有多个模型时列出候选，不会随意猜选。
+
+`/reason` 开关「显示思考」——它改的就是插件设置页上的同一个 `streaming.progress.narration`，两处永远一致。不带参数显示当前状态，`/reason on` 与 `/reason off` 切换；保存属于连接级改动，渠道会短暂重连后生效。
+
+**每个渠道会话收到的消息都带本地时间前缀**（`[2026-10-27 周二 11:30] 原文`），由渠道自己的消息时间戳生成，使用本机时区。模型本身没有时钟，宿主运行时上下文也不带时间，没有这个前缀它会从对话内容推断日期。前缀只加在最新一条消息的开头，历史部分不变，因此不影响提示词缓存；命令消息不加前缀，幂等载荷保持原样。
 
 ## 安装与兼容性
 

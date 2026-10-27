@@ -2,6 +2,16 @@
 
 This file holds historical behavior notes formerly embedded in README. For current setup and behavior, start with [README.md](README.md) or [简体中文](README.zh-CN.md).
 
+## 0.6.3
+
+- Every incoming channel message now starts with a local date prefix (`[2026-10-27 周二 11:30] text`), derived from the channel's own timestamp in the machine's time zone. The model has no clock and the Host runtime context carries no time, so it used to infer dates from content and get them wrong. The prefix sits at the front of the newest message only, which leaves the cached prompt prefix untouched; command messages are never stamped and the idempotency payload stays exactly as received.
+
+## 0.6.2
+
+- Removed the Discord `/prompt` slash command. It only existed to send a message without mentioning the bot, and `requireMention` already defaults to off for allowlisted groups, so it was redundant.
+- Added `/reason` on both channels to toggle the "show thinking" setting (`streaming.progress.narration`) from chat. It edits the same value the plugin page owns; saving is a connection-level change, so the channel reconnects briefly.
+- Discord command registration now syncs instead of only creating: a command removed from the list (such as `/prompt`) is deleted from the application rather than staying visible forever.
+
 ## 0.6.1
 
 - Fixed: the Host Session query is asynchronous. Rotation now awaits `observeSession` instead of reading a Promise, which had silently produced an undefined `cwd` and would have created successor Sessions in the wrong workspace. An unreadable header now fails closed and cools the Session down instead of falling back to a default path.

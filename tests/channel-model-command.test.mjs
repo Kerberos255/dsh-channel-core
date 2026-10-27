@@ -60,7 +60,10 @@ test('channel runtime routes /model and /think only after sender authorization; 
  assert.equal(calls.length,2);
  runtime.provider='discord';
  await runtime.receive({...origin,provider:'discord'},cfg,{},signal);
- assert.deepEqual(calls.at(-1),['message','/model p/beta']);
+ assert.deepEqual(calls.at(-1).slice(0,1),['message']);
+ // Discord has no text /model command, so it stays an ordinary message and now
+ // carries the local date stamp ahead of the original text.
+ assert.match(calls.at(-1)[1],/^\[\d{4}-\d{2}-\d{2} 周[一二三四五六日] \d{2}:\d{2}\] \/model p\/beta$/);
 });
 
 test('provider-only shortcut selects exactly one published model and its default effort',async()=>{

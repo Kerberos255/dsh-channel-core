@@ -21,12 +21,12 @@ export function normalize(message,config,botId){
     timestamp:Math.trunc(message.createdTimestamp),mentionedBot:message.mentions?.users?.has(botId)??false};
 }
 export const slashCommands=[
-  {name:'prompt',description:'向当前 DSH 会话发送消息',options:[{type:3,name:'text',description:'消息内容',required:true}]},
   ...['new','stop','status'].map(name=>({name,description:{new:'创建新会话',stop:'停止当前轮次',status:'查看渠道状态'}[name]})),
   {name:'session',description:'查看或切换本渠道的会话',options:[{type:3,name:'id',description:'会话 ID',autocomplete:true,required:false}]},
   {name:'answer',description:'回答 DSH 的问题',options:[{type:3,name:'token',description:'问题中显示的回答令牌',required:true},{type:3,name:'text',description:'你的回答',required:true}]},
   {name:'model',description:'切换本渠道会话使用的模型',options:[{type:3,name:'model',description:'模型（输入可搜索）',required:true,autocomplete:true}]},
-  {name:'think',description:'设置本渠道会话的推理强度',options:[{type:3,name:'effort',description:'推理强度（输入可搜索）',required:true,autocomplete:true}]}
+  {name:'think',description:'设置本渠道会话的推理强度',options:[{type:3,name:'effort',description:'推理强度（输入可搜索）',required:true,autocomplete:true}]},
+  {name:'reason',description:'开启或关闭思考过程显示',options:[{type:3,name:'state',description:'开或关',required:false,choices:[{name:'开',value:'on'},{name:'关',value:'off'}]}]}
 ];
 const slashCommandNames=new Set(slashCommands.map(item=>item.name));
 function interactionMessage(interaction,config,text){const thread=interaction.channel?.isThread?.();return {provider:'discord',accountId:config.accountId,conversationId:thread?interaction.channel.parentId:interaction.channelId,threadId:thread?interaction.channelId:undefined,userId:interaction.user.id,messageId:'interaction:'+interaction.id,kind:interaction.guildId?(thread?'thread':'group'):'dm',text,attachments:[],resources:[],timestamp:Math.trunc(interaction.createdTimestamp??Date.now()),mentionedBot:true};}
@@ -105,10 +105,10 @@ export async function createTransport({config,credentials,signal,receive,state,d
         }
         return;
       }
-      if(interaction.isChatInputCommand?.()&&['prompt','new','stop','status','session','answer'].includes(interaction.commandName)){
+      if(interaction.isChatInputCommand?.()&&['new','stop','status','session','answer','reason'].includes(interaction.commandName)){
         await interaction.deferReply();
-        const command=interaction.commandName,args=command==='answer'?interaction.options.getString('token')+' '+interaction.options.getString('text'):command==='session'?interaction.options.getString('id')??'':'';
-        const message=interactionMessage(interaction,config,command==='prompt'?interaction.options.getString('text'):'/'+command+(args?' '+args:''));
+        const command=interaction.commandName,args=command==='answer'?interaction.options.getString('token')+' '+interaction.options.getString('text'):command==='session'?interaction.options.getString('id')??'':command==='reason'?interaction.options.getString('state')??'':'';
+        const message=interactionMessage(interaction,config,'/'+command+(args?' '+args:''));
         interactions.set(message.messageId,interaction);
         while(interactions.size>256)interactions.delete(interactions.keys().next().value);
         const result=await receive(message);
@@ -328,13 +328,15 @@ export async function createTransport({config,credentials,signal,receive,state,d
     async start(){
       await client.login(credentials[0]);checkAbort(signal);
       if(config.registerCommands){
-        // Register all replacements before retiring the legacy grouped command.
-        // If a create fails, /dsh remains usable until the next connection.
+        // Register all replacements before retiring anything, then sync: `create`
+        // only adds or updates, so a command dropped from the list (the old /prompt
+        // shim) would otherwise stay visible in Discord forever.
         for(const command of slashCommands)await client.application.commands.create(command);
         try{
           const registered=await client.application.commands.fetch?.();
-          const obsolete=registered?.find?.(item=>item.name==='dsh')??[...(registered?.values?.()??[])].find(item=>item.name==='dsh');
-          if(obsolete)await client.application.commands.delete(obsolete.id);
+          const list=registered?.values?[...registered.values()]:(Array.isArray(registered)?registered:[]);
+          const keep=new Set(slashCommands.map(command=>command.name));
+          for(const item of list)if(!keep.has(item.name))await client.application.commands.delete(item.id);
         }catch(error){
           // Cleanup problems must not disconnect otherwise healthy channels.
           state('Discord 旧命令清理未完成：'+String(error?.code??'api-error').slice(0,40),false);

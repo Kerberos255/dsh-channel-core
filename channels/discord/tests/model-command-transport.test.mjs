@@ -59,7 +59,7 @@ test('the transport registers flat commands and drives /model through the Host',
   const f = await fixture({ host: hostFixture({ selectModel: async request => { seen.push(request); return { selected: request }; } }) });
   try {
     await f.transport.start();
-    assert.deepEqual(f.registered, ['prompt', 'new', 'stop', 'status', 'session', 'answer', 'model', 'think']);
+    assert.deepEqual(f.registered, ['new', 'stop', 'status', 'session', 'answer', 'model', 'think', 'reason']);
 
     const autocomplete = interaction({ commandName: 'model', query: 'v4', strings: { autocomplete: '1' } });
     f.events.emit('interactionCreate', autocomplete);
