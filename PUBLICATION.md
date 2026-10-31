@@ -10,7 +10,7 @@ The included client code is already generated, so standard installation needs no
 Replace <DSH_ROOT> in legacy documentation examples with your DSH install path.
 Upstream third-party dependencies retain their own licenses.
 
-The legacy `runtime-network.test.mjs` depended on a personal DSH profile, the `ws` module from that profile, and temporary TLS fixture files; it is intentionally excluded from the public source snapshot. Recreate a self-contained network test with generated test-only TLS credentials before advertising that integration coverage.
+`npm test` runs the portable suite without installing DSH peers or contacting bot services. `npm run test:host` runs all suites in an environment that supplies the compatible DSH SDK and declared development dependencies. The network suite uses the project's `ws` dependency, OS temporary directories, and the included public test-only TLS fixtures; it never loads a personal DSH profile.
 
 Merged channel settings can be rebuilt with node tools/build-client.mjs.
 
@@ -42,3 +42,8 @@ from shared local settings; no user configuration, secrets, sessions, logs, or
 runtime databases are included. Existing public documentation, license and
 workflow are retained. Live CardKit authorization and Discord proxy behavior
 must still be validated in a real bot deployment.
+
+
+## 0.6.4 · Model-command compatibility
+
+The production change matches the locally verified Channel Core 0.6.4: pass the native projection cancellation signal and accept the Feishu `/models` alias. Public documentation and example configuration are retained. Added portable regressions cover the required signal and cancelled lookups; SDK-backed tests also cover authorization, command lifetime propagation, and Discord reasoning autocomplete. Automated tests use fixtures; real bot permissions and message delivery require deployment verification.

@@ -14,7 +14,7 @@ const catalog = {
   ],
 };
 
-async function fixture({ host, sessions = async () => ['session-1'], receive = async()=>{}, legacy = false } = {}) {
+async function fixture({ host, sessions = async () => ['session-1'], receive = async()=>{}, legacy = false, signal = new AbortController().signal } = {}) {
   const events = new EventEmitter(), calls = [], registered = [], deleted = [];
   const channel = { isTextBased: () => true, messages: { edit: async () => ({ id: 'x' }) }, send: async () => ({ id: 'y' }) };
   class Client {
@@ -25,7 +25,7 @@ async function fixture({ host, sessions = async () => ['session-1'], receive = a
     async destroy() {}
   }
   const sdk = { Client, Options: { cacheWithLimits: () => () => {} }, GatewayIntentBits: { Guilds: 1, GuildMessages: 2, DirectMessages: 3, MessageContent: 4 }, Partials: { Channel: 1 } };
-  const transport = await createTransport({ config: schema.validate({}), credentials: ['fixture'], signal: new AbortController().signal, receive, state: () => {}, action: async () => {}, sessions, ...(host ? { host } : {}) }, sdk);
+  const transport = await createTransport({ config: schema.validate({}), credentials: ['fixture'], signal, receive, state: () => {}, action: async () => {}, sessions, ...(host ? { host } : {}) }, sdk);
   return { calls, events, registered, deleted, transport };
 }
 
@@ -40,6 +40,7 @@ function interaction({ commandName, query = '', strings = {} }) {
     get deferred() { return state.deferred; },
     get replied() { return state.replied !== undefined; },
     async deferReply() { state.deferred = true; },
+    async reply(body) { state.replied = body.content; },
     async editReply(body) { state.replied = body.content; return { id: 'reply' }; },
     async followUp(body) { state.replied = body.content; },
     async respond(choices) { state.replied = choices; },
@@ -136,4 +137,25 @@ test('model commands degrade when the channel has no session or the Host refuses
     await new Promise(resolve => setImmediate(resolve));
     assert.match(unsupported.result().replied, /不支持模型命令/u);
   } finally { await bare.transport.close(); }
+});
+
+test('Discord think autocomplete and selection use the transport lifetime signal',async()=>{
+ const stop=new AbortController(),seen=[];
+ const f=await fixture({signal:stop.signal,host:hostFixture({
+  projections:async(_request,signal)=>{
+   signal.throwIfAborted();seen.push(signal);
+   return{values:{modelSelection:{next:{provider:'deepseek-account',model:'deepseek-flash'}}}};
+  }
+ })});
+ try{
+  const auto=interaction({commandName:'think',strings:{autocomplete:'1'}});
+  f.events.emit('interactionCreate',auto);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(auto.result().replied.length,2);
+  const choose=interaction({commandName:'think',strings:{effort:'max'}});
+  f.events.emit('interactionCreate',choose);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(choose.result().replied,/推理强度已更新/);
+  assert.equal(seen.length,2);assert(seen.every(signal=>signal===stop.signal));
+ }finally{await f.transport.close();}
 });

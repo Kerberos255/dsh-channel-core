@@ -67,7 +67,7 @@ export async function createTransport({config,credentials,signal,receive,state,d
         const catalog=await host.modelCatalog();
         if(interaction.commandName==='model'){await interaction.respond(modelChoices(catalog,query));return;}
         const sessionId=await sessionFor(interaction);
-        const selection=sessionId?currentSelection(catalog,await host.projections({sessionId})):undefined;
+        const selection=sessionId?currentSelection(catalog,await host.projections({sessionId},signal)):undefined;
         await interaction.respond(effortChoices(catalog,selection?.provider,selection?.model,query));return;
       }
       if(interaction.isChatInputCommand?.()&&(interaction.commandName==='model'||interaction.commandName==='think')){
@@ -84,7 +84,7 @@ export async function createTransport({config,credentials,signal,receive,state,d
             const result=await host.selectModel({sessionId,provider:chosen.provider,model:chosen.model,...(effort===undefined?{}:{reasoningEffort:effort})});
             await ephemeral(interaction,'已切换模型：'+(result?.selected?describeSelection(catalog,result.selected):chosen.provider+'/'+chosen.model)+'\n从下一次请求开始生效。');return;
           }
-          const selection=currentSelection(catalog,await host.projections({sessionId}));
+          const selection=currentSelection(catalog,await host.projections({sessionId},signal));
           if(!selection?.provider||!selection?.model){await ephemeral(interaction,'还不知道当前模型，先用 /model 选一个。');return;}
           if(!effortChoices(catalog,selection.provider,selection.model).length){await ephemeral(interaction,'当前模型 '+selection.model+' 没有公布可选的推理强度。');return;}
           const effort=String(interaction.options.getString('effort'));

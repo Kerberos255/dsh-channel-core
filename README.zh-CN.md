@@ -31,7 +31,7 @@ Discord 将思考、草稿和工具进度显示在滚动进度消息中。原生
 
 两个渠道在 Ask User 回答提交后，原提问卡片变为包含问题与用户答案的只读回执，并移除可操作按钮。已发布的前文继续可见，不应在后续回复中重复发送。
 
-Discord 提供平铺的 `/new`、`/stop`、`/status`、`/session`、`/answer`、`/model`、`/think`、`/reason` 命令；飞书提供文本 `/new`、`/stop`、`/status`、`/session`、`/answer`、`/model`、`/think`、`/reason`。模型切换只在下一轮生效；同一 Provider 有多个模型时列出候选，不会随意猜选。
+Discord 提供平铺的 `/new`、`/stop`、`/status`、`/session`、`/answer`、`/model`、`/think`、`/reason` 命令；飞书提供文本 `/new`、`/stop`、`/status`、`/session`、`/answer`、`/model`（也可用 `/models`）、`/think`、`/reason`。不带参数的 `/model` 查看当前模型和可选列表，`/model provider/model` 切换模型。Discord 在原生 `/model` 命令的 `model` 参数中查看、搜索并选择候选。模型切换只在下一轮生效；同一 Provider 有多个模型时列出候选，不会随意猜选。
 
 `/reason` 开关「显示思考」——它改的就是插件设置页上的同一个 `streaming.progress.narration`，两处永远一致。不带参数显示当前状态，`/reason on` 与 `/reason off` 切换；保存属于连接级改动，渠道会短暂重连后生效。
 

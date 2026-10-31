@@ -1,5 +1,12 @@
 # Changelog · Channel Core
 
+## 0.6.4
+
+- Pass the channel lifetime signal to native Session projection reads, fixing Feishu `/model` and `/think` on DSH rc.5 and both Discord `/think` call sites.
+- Accept Feishu `/models` as an authorized alias of `/model`; listing starts no LLM turn. Cancelled lookups cannot apply a model selection.
+- Add signal, cancellation, authorization, and transport regressions. Keep default CI independent of DSH peers, and make the SDK-backed network fixture use project dependencies and temporary directories.
+
+
 This file holds historical behavior notes formerly embedded in README. For current setup and behavior, start with [README.md](README.md) or [简体中文](README.zh-CN.md).
 
 ## 0.6.3

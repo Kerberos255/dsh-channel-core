@@ -24,11 +24,12 @@ const until = async predicate => {
   }
 };
 
-test('fresh install creates the steering config outside installed code', () => temporary(store => {
+test('fresh install creates the steering config outside installed code', () => temporary((store, directory) => {
   assert.deepEqual(store.value, DEFAULT_CONFIG);
   assert.deepEqual(JSON.parse(fs.readFileSync(store.filename)), DEFAULT_CONFIG);
-  assert.equal(configPath('E:\\dsh\\home'), 'E:\\dsh\\plugins\\dsh-channel-core\\config.json');
-  assert.notEqual(configPath('E:\\dsh\\home'), configPath('E:\\dsh\\staging\\isolated\\home'));
+  const home = path.join(directory, 'home');
+  assert.equal(configPath(home), path.join(directory, 'plugins', 'dsh-channel-core', 'config.json'));
+  assert.notEqual(configPath(home), configPath(path.join(directory, 'isolated', 'home')));
 }));
 
 test('complete validation rejects typos, coercion, unknown versions and malformed types', () => {

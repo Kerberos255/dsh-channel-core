@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { channelModelCommand } from '../lib/channel-model-command.js';
 import { ChannelRuntime } from '../lib/channel-runtime.js';
+import ChannelCore from '../lib/index.js';
 
 const catalog={default:{provider:'p',model:'alpha'},
  groups:[{id:'p',name:'Provider',models:[
@@ -111,4 +112,37 @@ test('shorthand never changes model when native Host declines the selection',asy
  const c={groups:[{id:'opencode-go',name:'OpenCode Go',models:[{id:'flash',name:'Flash'}]}]};
  const {controller}=host({modelCatalog:async()=>c,selectModel:async()=>{throw new Error('native-denied');}});
  await assert.rejects(channelModelCommand(controller,'s1','model','opencode-go'),/native-denied/);
+});
+
+test('Feishu /models is authorized and routed as a model command without an LLM turn',async()=>{
+ const calls=[],runtime=Object.create(ChannelRuntime.prototype);
+ Object.assign(runtime,{closed:false,provider:'feishu',diagnostic:()=>{},
+  core:{store:{setOwner:()=>{}},command:async(_msg,cmd,args)=>{calls.push([cmd,args]);return{accepted:true};},
+   receive:async()=>{throw new Error('model command reached the LLM');}},
+  sessionContext:async()=>({create:{cwd:'E:/test'},scope:{workspaceId:'test'}})});
+ const cfg={accountId:'default',ownerMode:'manual',ownerUserId:'allowed',dmPolicy:'allowlist',allowedUsers:['allowed'],allowGroups:false,groupPolicy:'allowlist',allowedGroups:[],requireMention:true,autoCollectGroups:false,inputMode:'inherit'};
+ const msg={provider:'feishu',accountId:'default',conversationId:'chat',messageId:'event',userId:'allowed',kind:'dm',text:'/models'};
+ const signal=new AbortController().signal;
+ await runtime.receive(msg,cfg,{},signal);
+ await runtime.receive({...msg,text:'/models p/beta'},cfg,{},signal);
+ assert.deepEqual(await runtime.receive({...msg,userId:'intruder'},cfg,{},signal),{ignored:true});
+ assert.deepEqual(calls,[['model',''],['model','p/beta']]);
+});
+
+test('ChannelCore forwards its command lifetime to the native model projection',async()=>{
+ const stop=new AbortController(),seen=[],replies=[];
+ const {controller}=host({projections:async(request,signal)=>{
+  signal.throwIfAborted();seen.push({request,signal});return null;
+ }});
+ const message={provider:'feishu',text:'/model',messageId:'event'};
+ const route={message,binding:{id:'binding',sessionId:'session-model'},receiptKey:'receipt-model',inboundMode:'queue'};
+ const core={closed:false,controller,commandTasks:new Map(),configFile:{value:{}},
+  router:{route:()=>route},archivedRecovery:{recover:async value=>value},
+  bridge:{store:{command:(_key,_payload,request)=>({request}),finishCommand:()=>{}},
+   reply:(_origin,body)=>replies.push(body)}};
+ const result=await ChannelCore.prototype.command.call(core,message,'model','',{signal:stop.signal});
+ assert.equal(result.accepted,true);
+ assert.equal(seen[0].signal,stop.signal);
+ assert.deepEqual(seen[0].request,{sessionId:'session-model'});
+ assert.match(replies[0].text,/可选模型/);
 });

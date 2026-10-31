@@ -14,6 +14,9 @@ jobs:
       - name: Syntax-check channel, settings, and CardKit modules
         run: |
           node --check lib/index.js
+          node --check lib/channel-model-command.js
+          node --check lib/channel-runtime.js
+          node --check tools/test-public.mjs
           node --check lib/proactive-outbound.js
           node --check tests/proactive-outbound.test.mjs
           node --check lib/bridge.js

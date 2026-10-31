@@ -30,7 +30,7 @@ Feishu supports CardKit component streaming with an IM-card fallback. Draft and 
 
 On both channels, a submitted Ask User question becomes a read-only receipt of the question and selected or custom answer, with interactive controls removed. Previously committed context remains visible and is not re-sent as a duplicate answer.
 
-Discord uses flat `/new`, `/stop`, `/status`, `/session`, `/answer`, `/model`, `/think`, `/reason` commands. Feishu supports text `/new`, `/stop`, `/status`, `/session`, `/answer`, `/model`, `/think`, `/reason`. Model selection is constrained to available models and takes effect from the next turn; ambiguous provider selections present candidates.
+Discord uses flat `/new`, `/stop`, `/status`, `/session`, `/answer`, `/model`, `/think`, `/reason` commands. Feishu supports text `/new`, `/stop`, `/status`, `/session`, `/answer`, `/model` (also `/models`), `/think`, `/reason`. Send `/model` without arguments to list the current and available models; use `/model provider/model` to switch. Discord lists candidates through the native `/model` command's searchable `model` option. Model selection is constrained to available models and takes effect from the next turn; ambiguous provider selections present candidates.
 
 `/reason` toggles "show thinking". It edits the same `streaming.progress.narration` setting the plugin page owns, so both entry points always agree. Without an argument it reports the current state; `/reason on` and `/reason off` switch it. The setting is connection-level, so the channel reconnects briefly before it takes effect.
 
