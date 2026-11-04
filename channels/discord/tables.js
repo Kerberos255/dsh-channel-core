@@ -2,7 +2,7 @@
  * Discord renders no Markdown tables: a GFM pipe table reaches the reader as literal text with
  * visible pipes and dashes. This converts each table outside fenced code into an aligned
  * monospace code block, in place, so message count, ordering and surrounding prose stay
- * untouched. Equivalent to OpenClaw's `markdown.tables: code` mode.
+ * untouched.
  *
  * Limits: tables are recognised only at the top level of a message (optional leading spaces), a
  * pipe inside an inline code span still splits its cell, and a table larger than the transport's

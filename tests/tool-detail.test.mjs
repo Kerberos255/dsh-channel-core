@@ -4,12 +4,12 @@ import { toolDetail, summarizeCommand, urlDetail, cutDetail } from '../lib/tool-
 import { renderProgressLines } from '../lib/progress-lines.js';
 
 test('command tools prefer the caller description over the raw command', () => {
-  const detail = toolDetail('pwsh', { description: '检查 openclaw 是否有更新', command: "$env:HTTPS_PROXY='http://127.0.0.1:10808'; gh release list" });
-  assert.equal(detail, '检查 openclaw 是否有更新');
+  const detail = toolDetail('pwsh', { description: '检查示例工具是否有更新', command: "$env:HTTPS_PROXY='http://127.0.0.1:10808'; gh release list" });
+  assert.equal(detail, '检查示例工具是否有更新');
 });
 
 test('without a description the command is unwrapped: env prefixes and pwsh wrapper go away', () => {
-  const detail = toolDetail('pwsh', { command: "$env:HTTPS_PROXY='http://127.0.0.1:10808/'; $env:HTTP_PROXY='http://127.0.0.1:10808'; gh release view v2026.9.9 -R openclaw/openclaw --json body" });
+  const detail = toolDetail('pwsh', { command: "$env:HTTPS_PROXY='http://127.0.0.1:10808/'; $env:HTTP_PROXY='http://127.0.0.1:10808'; gh release view v2026.9.9 -R example/project --json body" });
   assert.match(detail, /^gh release view v2026\.9\.9/);
   assert.ok(!detail.includes('$env:'));
   assert.ok(!detail.includes('HTTP_PROXY'));
@@ -26,7 +26,7 @@ test('file tools show the basename and an optional line range', () => {
 });
 
 test('web fetch keeps the whole URL and only shortens very long ones', () => {
-  const url = 'https://raw.githubusercontent.com/openclaw/openclaw/v2026.9.9/CHANGELOG/2026.9.9.md';
+  const url = 'https://raw.githubusercontent.com/example/project/v2026.9.9/CHANGELOG/2026.9.9.md';
   assert.equal(toolDetail('web_fetch', { url }), url);
   const long = 'https://example.com/' + 'segment/'.repeat(12) + 'final-report.md';
   const short = toolDetail('web_fetch', { url: long });
@@ -36,7 +36,7 @@ test('web fetch keeps the whole URL and only shortens very long ones', () => {
 });
 
 test('search keywords are quoted, credentials stay masked, results stay whole words', () => {
-  assert.equal(toolDetail('web_search', { query: 'openclaw 9.9 更新' }), '"openclaw 9.9 更新"');
+  assert.equal(toolDetail('web_search', { query: '示例项目 9.9 更新' }), '"示例项目 9.9 更新"');
   assert.equal(toolDetail('grep', { pattern: 'narration', path: 'E:\\dsh\\dsh-plugins\\dsh-channel-core' }), '"narration" · dsh-channel-core');
   assert.equal(toolDetail('pwsh', { command: 'npm pack --token=SUPERSECRETVALUE' }), 'npm pack --token=***');
   const prose  = '一二三四五 六七八九十 甲乙丙丁戊 己庚辛壬癸 子丑寅卯辰 巳午未申酉 戌亥天地玄黄 日月盈昃辰宿列张 寒来暑往秋收冬藏 闰余成岁律吕调阳 云腾致雨露结为霜';
