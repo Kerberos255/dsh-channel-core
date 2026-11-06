@@ -499,8 +499,11 @@ export async function createTransport({config,credentials,signal,receive,state,d
           throw new Error('feishu-status-card-invalid');
         return channel.send(origin.conversationId,{card:body.feishuStatusCard},sendOptions(origin));
       }
-      const finished=await presentation({...body,final:true},true);
-      const hasDrafts=origin.kind==='dm'&&config.streaming.mode==='progress'
+      // Group process cards retain public drafts only; never unreviewed reasoning.
+      const safeBody=origin.kind==='dm'?body:{...body,drafts:[],draftsTruncated:false,
+        publicDrafts:config.streaming.mode==='progress'&&config.streaming.progress.draft?body.publicDrafts:[]};
+      const finished=await presentation({...safeBody,final:true},true);
+      const hasDrafts=['dm','group','thread'].includes(origin.kind)&&config.streaming.mode==='progress'
         &&!questionCards.has(key(origin))&&progress.has(key(origin))&&processEntries(finished).length>0;
       // Only retain a collapsed reasoning card if content remains after answer overlap removal.
       // The final answer is never placed inside that same card.

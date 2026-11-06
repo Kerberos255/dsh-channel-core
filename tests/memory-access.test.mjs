@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {CoreStore} from '../lib/store.js';
-import {isOwnerChannelSession} from '../lib/memory-access.js';
+import {isOwnerChannelSession,isGroupChannelSession} from '../lib/memory-access.js';
 
 const link=(store,provider,accountId,userId,identityId,sessionId,kind='dm')=>{
   store.syncAliases(provider,accountId,[{userId,identityId}]);
@@ -38,5 +38,25 @@ test('changing a trusted alias revokes the old memory identity',()=>{
   assert.equal(isOwnerChannelSession(store,'s1','my-owner'),true);
   store.syncAliases('discord','default',[]);
   assert.equal(isOwnerChannelSession(store,'s1','my-owner'),false);
+ }finally{store.close();}
+});
+
+test('durably bound Feishu/Discord group and thread sessions share memory, unrelated DMs stay isolated',()=>{
+ const store=new CoreStore(':memory:');
+ try{
+  for(const [id,provider,kind] of [['feishu-group','feishu','group'],['discord-group','discord','group'],['discord-thread','discord','thread']]){
+   store.putBinding(id,{sessionId:id,provider,accountId:'default',conversationId:'channel-1',kind,scope:{}});
+   assert.equal(isGroupChannelSession(store,id),true,id);
+  }
+  store.putBinding('other-dm',{sessionId:'other-dm',provider:'discord',accountId:'default',conversationId:'private',userId:'stranger',kind:'dm',scope:{}});
+  assert.equal(isGroupChannelSession(store,'other-dm'),false);
+  assert.equal(isGroupChannelSession(store,'unknown'),false);
+  assert.equal(isGroupChannelSession(store,''),false);
+  store.putBinding('mixed',{sessionId:'feishu-group',provider:'feishu',accountId:'default',conversationId:'private',userId:'stranger',kind:'dm',scope:{}});
+  assert.equal(isGroupChannelSession(store,'feishu-group'),false,'mixed DM/group provenance must fail closed');
+  store.claim({key:'old-group-receipt',sessionId:'retired-group',origin:{kind:'group',provider:'feishu',accountId:'default',conversationId:'group-1'},payload:'hi'});
+  assert.equal(isGroupChannelSession(store,'retired-group'),true,'historical group receipts retain provenance after rotation');
+  store.claim({key:'bad-receipt',sessionId:'retired-group',origin:{kind:'dm',provider:'feishu',accountId:'default',conversationId:'private'},payload:'other'});
+  assert.equal(isGroupChannelSession(store,'retired-group'),false,'mixed historical sources must fail closed');
  }finally{store.close();}
 });

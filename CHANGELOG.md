@@ -1,5 +1,13 @@
 # Changelog · Channel Core
 
+## 0.6.5
+
+- Add read-only group/thread memory provenance checks using durable Discord/Feishu bindings and receipts; reject mixed private/group histories. Owner-DM identity verification is unchanged.
+- Cooperating memory plugins can share workspace memories with group sessions. Channel admission controls remain independent and group replies may disclose memory facts.
+- Permit public text drafts in group/thread progress and committed Feishu process cards when enabled; preserve private reasoning as verified-owner-DM-only, with streaming and final-delivery regressions.
+- Enable group/thread public text drafts and Feishu retained public process cards when the channel draft setting is on; never expose private reasoning to groups or unverified DMs.
+
+
 ## 0.6.4
 
 - Pass the channel lifetime signal to native Session projection reads, fixing Feishu `/model` and `/think` on DSH rc.5 and both Discord `/think` call sites.

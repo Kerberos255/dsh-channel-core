@@ -10,7 +10,7 @@
 - Map verified direct messages from the same owner to a shared **native DSH session** when explicitly configured.
 - Durable inbound receipts, serialized session admission, and native steer/queue/interrupt handling avoid replaying messages.
 - Native Ask User interactions and progress/status integration preserve conversational continuity.
-- Owner verification guards personal-memory access and cross-channel session transitions.
+- Owner verification keeps unverified private DMs isolated. Separately, durably bound group and thread sessions can share workspace memory with an explicitly enabled memory plugin.
 
 ## Proactive outbound messaging
 
@@ -24,9 +24,11 @@ Channel Core supports agent-initiated outbound messages without a preceding inbo
 
 ## Streaming, Ask User and commands
 
-Discord streams thinking, draft and tool activity in a rolling progress message. Committed interim text can appear as a native blockquote in the completed message, separate from the final answer; unpublished/private reasoning is not promoted to public draft text. Live previews show 📝 without artificial section names.
+Discord streams thinking, draft and tool activity in a rolling progress message. Committed interim text can appear as a native blockquote in the completed message, separate from the final answer; unpublished/private reasoning is not promoted to public draft text. Live previews show 📝 without artificial section names. Group/thread chats can show public text drafts when enabled; private reasoning stays limited to verified owner DMs.
 
 Feishu supports CardKit component streaming with an IM-card fallback. Draft and thinking have independent visibility switches; disabling thinking does not hide public draft text. Completed turns may retain a collapsed 📝 过程记录 panel when enabled. Refresh limits and optional runtime footers are channel-specific.
+
+**Group and thread chats:** When the public-draft switch is enabled, provisional public text and committed interim messages can appear in progress updates and retained process cards, just as in owner DMs. Private model reasoning stays restricted to verified owner DMs; disabling drafts hides the public-draft history.
 
 On both channels, a submitted Ask User question becomes a read-only receipt of the question and selected or custom answer, with interactive controls removed. Previously committed context remains visible and is not re-sent as a duplicate answer.
 
@@ -56,7 +58,7 @@ Use your DSH profile name. Pin an installation to a Git commit if reproducibilit
 
 ## Security and operational boundaries
 
-A channel owner is verified per bot account; group conversations and unverified users must not inherit personal-memory authority. Session mapping decisions are audited and cannot silently reuse sessions from another workspace. The native Host manages agent execution, cancellations, jobs, and saved histories. The plugin keeps independent delivery and receipt state, not a second model engine.
+A channel owner is verified per bot account; unverified private DMs cannot inherit owner authority. Independently, group/thread sessions with durable Channel Core provenance may read the same workspace memory through cooperating memory plugins. **Group members may elicit private facts in bot replies**: limit channel admission to trusted groups. Session mapping decisions are audited and cannot silently reuse sessions from another workspace. The native Host manages agent execution, cancellations, jobs, and saved histories. The plugin keeps independent delivery and receipt state, not a second model engine.
 
 Settings and channel files are local to DSH; do not upload credentials, binding databases, or historical messages. Source template: [config.example.json](config.example.json).
 

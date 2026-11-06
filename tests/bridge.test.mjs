@@ -723,3 +723,63 @@ test('native question timeout releases wait, revokes capabilities and retires th
   assert.equal(f.store.db.prepare('SELECT count(*) AS n FROM interactions').get().n,0);
  }finally{await f.close();}
 });
+
+test('group turns show public text drafts with switch on but never model reasoning',async()=>{
+ const f=fixture();
+ try{
+  const adapter=f.bridge.adapters.get(JSON.stringify(['feishu','test'])).adapter;
+  adapter.showPublicDrafts=true;adapter.showNarration=true;
+  const group={...f.origin,kind:'group',userId:'group-member',conversationId:'group-a',messageId:'group-input'};
+  f.store.claim({key:'group-input',requestId:'group-input',sessionId:f.session.id,origin:group,payload:'group'});
+  f.bridge.claimed(f.session,'group-input',2);
+  f.bridge.stream(f.session,{type:'start',turn:2,attemptId:'group-stream',revision:1});
+  for(const [index,chunk] of [
+   {type:'block-start',index:0,blockType:'reasoning'},
+   {type:'reasoning-delta',index:0,text:'PRIVATE-GROUP-REASONING'},
+   {type:'block-start',index:1,blockType:'text'},
+   {type:'text-delta',index:1,text:'群聊实时公开草稿'}
+  ].entries())f.bridge.stream(f.session,{type:'chunk',attemptId:'group-stream',revision:1,index,chunk});
+  await flushProgress(f);
+  const live=f.progress.findLast(x=>x.from.kind==='group')?.body.activity;
+  assert.equal(live.activeTextDraft,'群聊实时公开草稿');
+  assert.equal(live.activeDraft,'');
+  assert.equal(live.narration,'');
+  assert(!JSON.stringify(live).includes('PRIVATE-GROUP-REASONING'));
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:2,message:{content:[
+   {type:'reasoning',text:'PRIVATE-GROUP-REASONING'},
+   {type:'text',text:'群聊已提交的阶段说明'},
+   {type:'tool-call',name:'read_file'}
+  ]}}});
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:2,message:{content:[{type:'text',text:'群聊最终答案'}]}}});
+  f.bridge.event(f.session,{type:'turn/end',data:{turn:2,reason:{kind:'completed'}}});
+  await f.bridge.idle();
+  const final=f.sent.find(x=>x.from.kind==='group')?.body;
+  assert.equal(final.text,'群聊最终答案');
+  assert.deepEqual(final.publicDrafts,['群聊已提交的阶段说明']);
+  assert.equal(final.drafts,undefined);
+  assert(!JSON.stringify(final).includes('PRIVATE-GROUP-REASONING'));
+ }finally{await f.close();}
+});
+test('group public draft setting off retains neither tentative nor committed draft history',async()=>{
+ const f=fixture();
+ try{
+  const adapter=f.bridge.adapters.get(JSON.stringify(['feishu','test'])).adapter;
+  adapter.showPublicDrafts=false;
+  const group={...f.origin,kind:'thread',userId:'thread-member',conversationId:'group-b',messageId:'thread-input'};
+  f.store.claim({key:'thread-input',requestId:'thread-input',sessionId:f.session.id,origin:group,payload:'thread'});
+  f.bridge.claimed(f.session,'thread-input',3);
+  f.bridge.stream(f.session,{type:'start',turn:3,attemptId:'thread-stream',revision:1});
+  f.bridge.stream(f.session,{type:'chunk',attemptId:'thread-stream',revision:1,index:0,chunk:{type:'block-start',index:0,blockType:'text'}});
+  f.bridge.stream(f.session,{type:'chunk',attemptId:'thread-stream',revision:1,index:1,chunk:{type:'text-delta',index:0,text:'不可显示的实时草稿'}});
+  await flushProgress(f);
+  const live=f.progress.findLast(x=>x.from.kind==='thread')?.body.activity;
+  assert.equal(live.activeTextDraft,'');
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:3,message:{content:[{type:'text',text:'阶段说明'},{type:'tool-call',name:'read_file'}]}}});
+  f.bridge.event(f.session,{type:'assistant/message',data:{turn:3,message:{content:[{type:'text',text:'最终答案'}]}}});
+  f.bridge.event(f.session,{type:'turn/end',data:{turn:3,reason:{kind:'completed'}}});
+  await f.bridge.idle();
+  const body=f.sent.find(x=>x.from.kind==='thread')?.body;
+  assert.equal(body.publicDrafts,undefined);
+  assert.equal(body.drafts,undefined);
+ }finally{await f.close();}
+});

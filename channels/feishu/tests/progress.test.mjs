@@ -862,3 +862,20 @@ test('steer freeze reports failed Patch edit instead of a false success',async()
     assert.equal(f.calls.find(c=>c.type==='update')?.id,'card-1');
   }finally{await t.close();}
 });
+
+test('Feishu group retains only committed public drafts as a collapsed card, never private reasoning',async()=>{
+ const streaming=schema.validate({streaming:{mode:'progress',progress:{draft:true,narration:true}}}).streaming;
+ const f=fixture(streaming),t=await f.create();
+ try{
+  const group={...origin,kind:'group'};
+  await t.progress(group,{status:'generating',activity:{timeline:[{type:'public-draft',text:'公开阶段说明'}]}});
+  await t.send(group,{status:'completed',final:true,publicDrafts:['公开阶段说明'],
+   drafts:['PRIVATE-REASONING'],text:'最终正文'});
+  const changed=f.calls.filter(x=>x.type==='update'),sent=f.calls.filter(x=>x.type==='send');
+  assert.equal(changed.length,1);
+  assert.equal(changed[0].payload.body.elements[0].tag,'collapsible_panel');
+  assert(JSON.stringify(changed[0]).includes('公开阶段说明'));
+  assert(!JSON.stringify(f.calls).includes('PRIVATE-REASONING'));
+  assert.equal(sent.at(-1).body.card.body.elements[0].content,'最终正文');
+ }finally{await t.close()}
+});
