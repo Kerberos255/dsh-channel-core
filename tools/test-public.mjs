@@ -19,7 +19,7 @@ const files=[
   "tests/schedule-host-compat.test.mjs",
   "tests/channel-recovery.test.mjs",
   "tests/discord-recovery.test.mjs",
-  "channels/feishu/tests/recovery.test.mjs",
+  "tests/feishu-connection-health.test.mjs",
   "tests/outbound-agent-tool.test.mjs",
   "tests/proactive-outbound.test.mjs",
   "tests/progress-lines.test.mjs",

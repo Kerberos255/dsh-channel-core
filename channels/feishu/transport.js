@@ -5,6 +5,7 @@ import { renderFooter } from '../discord/footer.js';
 import { createCardKitChannel, streamingCard } from './cardkit.js';
 import { installStatusMenu } from './menu-status.js';
 import { completedAskUserText } from '../../lib/answered-question.js';
+import { feishuConnectionHealth } from '../../lib/feishu-connection-health.js';
 import { groupAllowlistFor } from '../../lib/channel-runtime.js';
 import { verifyQueuedImage } from '../../lib/outbound-image.js';
 import { verifyQueuedFile } from '../../lib/outbound-file.js';
@@ -475,13 +476,7 @@ export async function createTransport({config,credentials,signal,receive,state,d
     return {frozen:!!frozen,closed};
   }
   const present=async(origin,body,actions=[],options)=>presentPayload(origin,card(await presentation(body),actions,options),{streaming:(options?.mode==='progress'||options?.mode==='partial')&&!actions.length&&body.final!==true,final:body.final===true});
-  const connectionHealth=()=>{
-    // Use the SDK's actual WebSocket readyState rather than message activity.
-    // An idle conversation must never be mistaken for a dead connection.
-    const status=channel.getConnectionStatus?.();
-    return {ready:status?.state==='connected',recovering:status?.state==='connecting'||status?.state==='reconnecting',
-      terminal:false,code:status?.state==='failed'?'feishu-sdk-failed':null};
-  };
+  const connectionHealth=()=>feishuConnectionHealth(channel,signal);
   let closing;const close=()=>closing??=(async()=>{signal.removeEventListener('abort',onAbort);disposers.splice(0).forEach(dispose=>dispose());const incompleteHandshake=channel.connected!==true;
     try{await channel.disconnect();}finally{
       // LarkChannel.disconnect() is a no-op before the first successful login.
