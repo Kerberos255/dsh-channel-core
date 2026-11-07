@@ -8,14 +8,14 @@ import { IdentityRouter } from '../lib/routing.js';
 import { schema } from '../channels/discord/config.js';
 import { ConfigFile } from '../lib/channel-plugin-settings/file-config.js';
 
-function fixture(extra={},configFile) {
+function fixture(extra={},configFile,provider='discord') {
   const config=configFile?.value??{enabled:true,allowedUsers:[],allowedGroups:[],allowGroups:true,requireMention:false,accountId:'test',identityLinks:[],agentPreset:'agent',workspacePath:'',memoryNamespace:'private',inputMode:'inherit',...extra};
   const callbacks=new Set(),calls=[],events=new Map();
   const settings={configFile:configFile??{value:config,subscribe(fn){callbacks.add(fn);return()=>callbacks.delete(fn);}}};
   const records=[];
-  const ctx={get:(name)=>name==='pluginDiagnostics'?{record(...row){records.push(row);}}:undefined,credentials:{async resolve(){return{value:'fixture'};}},channelCore:{resolveWorkspace:async config=>config.workspacePath||'E:\\dsh\\deepseek-harness\\default-workspace',networkReady:Promise.resolve(),runtimeNetwork:{source:'system'},store:{syncAliases(){},claimOwner(){return null;},setOwner(){return null;}},bridge:{register(){return()=>{};}},receive:async(message)=>{calls.push(message);return{accepted:true};}},on(name,fn){events.set(name,fn);return()=>events.delete(name);}};
+  const ctx={get:(name)=>name==='pluginDiagnostics'?{record(...row){records.push(row);}}:undefined,credentials:{async resolve(){return{value:'fixture'};}},channelCore:{resolveWorkspace:async config=>config.workspacePath||path.join(process.cwd(),'fixture-workspace'),networkReady:Promise.resolve(),runtimeNetwork:{source:'system'},store:{syncAliases(){},claimOwner(){return null;},setOwner(){return null;}},bridge:{register(){return()=>{};}},receive:async(message)=>{calls.push(message);return{accepted:true};}},on(name,fn){events.set(name,fn);return()=>events.delete(name);}};
   let transportArgs,starts=0;
-  const runtime=new ChannelRuntime(ctx,settings,{provider:'discord',credentialRefs:()=>['DISCORD_BOT_TOKEN'],createTransport:async args=>{transportArgs=args;return{start:async()=>{starts++;},close:async()=>{},details:()=>({applicationId:'application-fixture'})};}});
+  const runtime=new ChannelRuntime(ctx,settings,{provider,credentialRefs:()=>['DISCORD_BOT_TOKEN'],createTransport:async args=>{transportArgs=args;return{start:async()=>{starts++;},close:async()=>{},details:()=>({applicationId:'application-fixture'})};}});
   return{runtime,ctx,calls,records,settings,get starts(){return starts;},get transportArgs(){return transportArgs;}};
 }
 const group={kind:'group',userId:'any-member',conversationId:'any-channel',text:'hello',resources:[],mentionedBot:false};
@@ -85,4 +85,104 @@ test('saving private scope and editing JSON apply to the next input and retire s
 test('reconnect state clears the online indicator and credential failures keep secrets private',async()=>{
  const f=fixture();try{await f.runtime.reconfigure();f.transportArgs.state('正在重连',false);assert(!f.runtime.details().connected);assert(f.runtime.details().lastDisconnectAt>0);f.transportArgs.state('正在重连',false);f.transportArgs.state('已重新连接',true);assert(f.runtime.details().connected);assert.equal(f.runtime.details().reconnects,1);f.transportArgs.state('已重新连接',true);assert.equal(f.runtime.details().reconnects,1);}finally{await f.runtime.close();}
  const disabled=fixture({enabled:false});try{await disabled.runtime.reconfigure();assert.equal(disabled.starts,0);}finally{await disabled.runtime.close();}
+});
+
+test('failed Discord first login is retried by the outer supervisor without restarting Channel Core', async () => {
+  const f=fixture();
+  let tries=0;
+  f.runtime.createTransport=async()=>({
+    async start() {
+      tries++;
+      if(tries===1)throw Object.assign(new Error('simulated outage'),{code:'ECONNREFUSED'});
+    },
+    async close() {},
+    details(){return{};},
+  });
+  try {
+    await f.runtime.reconfigure();
+    assert.equal(f.runtime.ready,false);
+    assert.equal(f.runtime.recovery.failures,1);
+    f.runtime.recovery.nextAt=0;
+    const changed=await f.runtime.recovery.poll();
+    assert.equal(changed,true);
+    assert.equal(tries,2);
+    assert.equal(f.runtime.ready,true);
+    assert.equal(f.runtime.recovery.failures,0);
+  } finally {await f.runtime.close();}
+});
+test('Discord auto-recovery cannot revive a manually disabled account or retry a terminal failure', async () => {
+  const f=fixture();
+  f.runtime.createTransport=async()=>({
+    async start() {throw Object.assign(new Error('disallowed intents'),{code:4014});},
+    async close() {},
+  });
+  try {
+    await f.runtime.reconfigure();
+    assert.equal(f.runtime.recovery.terminal,4014);
+    assert.equal(await f.runtime.recovery.poll(),false);
+    f.settings.configFile.value.enabled=false;
+    assert.equal(await f.runtime.recovery.poll(),false);
+    assert.equal(f.runtime.ready,false);
+  }finally{await f.runtime.close();}
+});
+
+test('superseded connection attempts are cancelled without scheduling spurious retries', async () => {
+  const f=fixture();
+  let attempts=0;
+  f.runtime.createTransport=async args=>({
+    async start() {
+      attempts++;
+      if(attempts!==1)return;
+      await new Promise((_resolve,reject)=>{
+        if(args.signal.aborted)return reject(Object.assign(new Error('cancelled'),{code:'aborted'}));
+        args.signal.addEventListener('abort',()=>reject(Object.assign(new Error('cancelled'),{code:'aborted'})),{once:true});
+      });
+    },
+    async close() {},
+  });
+  try {
+    const first=f.runtime.reconfigure();
+    await new Promise(resolve=>setTimeout(resolve,10));
+    const second=f.runtime.reconfigure();
+    await Promise.all([first,second]);
+    assert.equal(attempts,2);
+    assert.equal(f.runtime.ready,true);
+    assert.equal(f.runtime.recovery.failures,0);
+  } finally {await f.runtime.close();}
+});
+
+test('Feishu failed first connect is automatically retried by the shared supervisor without touching Discord',async()=>{
+  const f=fixture({appId:'cli_fixture',enabled:true},undefined,'feishu');
+  let attempts=0;
+  f.runtime.createTransport=async()=>({
+    async start(){if(++attempts===1)throw Object.assign(new Error('feishu-network-down'),{code:'not_connected'});},
+    async close(){},
+    health(){return {ready:true,terminal:false};},
+  });
+  try{
+    await f.runtime.reconfigure();
+    assert.equal(attempts,1);
+    assert.equal(f.runtime.ready,false);
+    assert.equal(f.runtime.recovery.provider,'feishu');
+    assert.equal(f.runtime.recovery.failures,1);
+    f.runtime.recovery.nextAt=0;
+    assert.equal(await f.runtime.recovery.poll(),true);
+    assert.equal(attempts,2);
+    assert.equal(f.runtime.ready,true);
+    assert.equal(f.runtime.recovery.failures,0);
+    assert(f.records.some(row=>row[2]==='channel.feishu-recovered'));
+    assert(!f.records.some(row=>row[2]==='channel.discord-recovering'));
+  }finally{await f.runtime.close();}
+});
+
+test('Feishu disabled configuration does not create a recovery connection',async()=>{
+  const f=fixture({appId:'cli_fixture',enabled:false},undefined,'feishu');
+  try{
+    await f.runtime.reconfigure();
+    assert.equal(f.starts,0);
+    f.runtime.recovery.noteFailure({code:'ETIMEDOUT'});
+    f.runtime.recovery.nextAt=0;
+    assert.equal(await f.runtime.recovery.poll(),false);
+    assert.equal(f.starts,0);
+  }finally{await f.runtime.close();}
 });

@@ -202,6 +202,9 @@ export async function createTransport({config,credentials,signal,receive,state,d
     ...Object.fromEntries(['post','put','patch'].map(method=>[method,(url,data,options)=>sdk.defaultHttpInstance[method](url,data,{...options,timeout:15000,signal})])),
   }:undefined;
   const channel=sdk.createLarkChannel({appId:config.appId,appSecret:credentials[0],domain:config.domain==='lark'?sdk.Domain.Lark:sdk.Domain.Feishu,source:'dsh-channel-feishu',logger:silent,includeRawEvent:true,handshakeTimeoutMs:15000,
+    // The SDK otherwise leaves ping liveness disabled: a half-open socket can
+    // look connected forever after the network or proxy disappears.
+    wsConfig:{pingTimeout:60},
     ...(http?{httpInstance:http}:{}),
     policy:{dmMode:config.ownerMode==='first-dm'||config.ownerMode==='manual'?'all':'allowlist',dmAllowlist:config.allowedUsers,groupAllowlist:groupAllowlistFor(config),requireMention:config.requireMention,respondToMentionAll:false},
     safety:{chatQueue:{enabled:false},batch:{text:{delayMs:0,longDelayMs:0},media:{delayMs:0}},staleMessageWindowMs:300000},outbound:{streamThrottleMs:config.throttleMs,textChunkLimit:6000,retry:{maxAttempts:1}}});
@@ -472,13 +475,28 @@ export async function createTransport({config,credentials,signal,receive,state,d
     return {frozen:!!frozen,closed};
   }
   const present=async(origin,body,actions=[],options)=>presentPayload(origin,card(await presentation(body),actions,options),{streaming:(options?.mode==='progress'||options?.mode==='partial')&&!actions.length&&body.final!==true,final:body.final===true});
-  let closing;const close=()=>closing??=(async()=>{signal.removeEventListener('abort',onAbort);disposers.splice(0).forEach(dispose=>dispose());await channel.disconnect();progress.clear();presented.clear();kitRecords.clear();questionCards.clear();questionContexts.clear();})();
+  const connectionHealth=()=>{
+    // Use the SDK's actual WebSocket readyState rather than message activity.
+    // An idle conversation must never be mistaken for a dead connection.
+    const status=channel.getConnectionStatus?.();
+    return {ready:status?.state==='connected',recovering:status?.state==='connecting'||status?.state==='reconnecting',
+      terminal:false,code:status?.state==='failed'?'feishu-sdk-failed':null};
+  };
+  let closing;const close=()=>closing??=(async()=>{signal.removeEventListener('abort',onAbort);disposers.splice(0).forEach(dispose=>dispose());const incompleteHandshake=channel.connected!==true;
+    try{await channel.disconnect();}finally{
+      // LarkChannel.disconnect() is a no-op before the first successful login.
+      // Clean up a failed handshake's WSClient so it cannot retry in the background
+      // after a replacement channel takes ownership.
+      if(incompleteHandshake)try{channel.rawWsClient?.close?.({force:true});}catch{}
+    }
+    progress.clear();presented.clear();kitRecords.clear();questionCards.clear();questionContexts.clear();})();
   const onAbort=()=>{void close().catch(()=>{});};signal.addEventListener('abort',onAbort,{once:true});
   return {
     throttleMs:config.throttleMs,
     showNarration:config.streaming.mode==='progress'&&config.streaming.progress.narration,
     showPublicDrafts:config.streaming.mode==='progress'&&config.streaming.progress.draft,
     start:()=>channel.connect(),
+    health:connectionHealth,
     details:()=>({feishuCardEngine:kitRecords.size?'CardKit':kitDisabled?'兼容模式（CardKit 不可用）':config.streaming.cardEngine==='patch'?'兼容模式':'CardKit 待首次流式创建'}),
     cutProgress,
     close,

@@ -6,8 +6,7 @@ import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
 import os from 'node:os';
-import ws from 'ws';
-const { WebSocket, WebSocketServer } = ws;
+import WebSocket, { WebSocketServer } from 'ws';
 import { once } from 'node:events';
 import { windowsProxy,resolveNetwork,configureRuntimeNetwork } from '../lib/runtime-network.js';
 
@@ -65,4 +64,68 @@ test('SDK WSS uses CONNECT with verified TLS and SNI; loopback bypasses the prox
   await connect('wss://localhost:'+secure.address().port,{family:4});assert.equal(tunnels.length,1);
   network.restore();network.restore();assert.deepEqual([http.get,http.request,http.globalAgent,https.get,https.request,https.globalAgent],before);
  }finally{network?.restore();for(const socket of gateway.clients)socket.terminate();for(const socket of sockets)socket.destroy();await Promise.all([new Promise(resolve=>gateway.close(resolve)),new Promise(resolve=>secure.close(resolve)),new Promise(resolve=>proxy.close(resolve))]);assert((await fs.realpath(directory)).startsWith(await fs.realpath(os.tmpdir())+path.sep));await fs.rm(directory,{recursive:true});}
+});
+
+test('system proxy target refreshes without a second global-agent wrapper or Host restart', async () => {
+  const before=[http.get,http.request,http.globalAgent,https.get,https.request,https.globalAgent];
+  const proxy1=http.createServer((_req,res)=>res.end('proxy-one'));
+  const proxy2=http.createServer((_req,res)=>res.end('proxy-two'));
+  proxy1.listen(0,'127.0.0.1');proxy2.listen(0,'127.0.0.1');
+  await Promise.all([once(proxy1,'listening'),once(proxy2,'listening')]);
+  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-proxy-refresh-'));
+  const first='http://127.0.0.1:'+proxy1.address().port;
+  const second='http://127.0.0.1:'+proxy2.address().port;
+  let selection=first,network;
+  const read=()=>new Promise((resolve,reject)=>{
+    const request=http.get('http://discord-refresh-fixture.invalid/status',response=>{
+      const chunks=[];response.on('data',x=>chunks.push(x));response.on('end',()=>resolve(Buffer.concat(chunks).toString('utf8')));
+    });
+    request.on('error',reject);
+  });
+  try {
+    await fs.writeFile(path.join(directory,'config.json'),JSON.stringify({network:{proxyMode:'system'}}));
+    network=await configureRuntimeNetwork(directory,{env:{},system:async()=>selection});
+    assert.equal(await read(),'proxy-one');
+    assert.equal(await network.refresh(),false);
+    selection=second;
+    assert.equal(await network.refresh(),true);
+    assert.equal(network.source,'system');
+    assert.equal(await read(),'proxy-two');
+    assert.equal(await network.refresh(),false);
+    network.restore();network.restore();
+    assert.deepEqual([http.get,http.request,http.globalAgent,https.get,https.request,https.globalAgent],before);
+  } finally {
+    network?.restore();proxy1.closeAllConnections();proxy2.closeAllConnections();
+    await Promise.all([new Promise(ok=>proxy1.close(ok)),new Promise(ok=>proxy2.close(ok))]);
+    await fs.rm(directory,{recursive:true,force:true});
+  }
+});
+
+test('initial direct mode can adopt a system proxy that starts later', async () => {
+  const before=[http.get,http.request,http.globalAgent,https.get,https.request,https.globalAgent];
+  const proxy=http.createServer((_req,res)=>res.end('late-proxy'));
+  proxy.listen(0,'127.0.0.1');
+  await once(proxy,'listening');
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-late-proxy-'));
+  let systemProxy='',network;
+  try {
+    await fs.writeFile(path.join(dir,'config.json'),JSON.stringify({network:{proxyMode:'system'}}));
+    network=await configureRuntimeNetwork(dir,{env:{},system:async()=>systemProxy});
+    assert.equal(network.viaProxy,false);
+    systemProxy='http://127.0.0.1:'+proxy.address().port;
+    assert.equal(await network.refresh(),true);
+    assert.equal(network.viaProxy,true);
+    const body=await new Promise((resolve,reject)=>{
+      const request=http.get('http://late-discord-fixture.invalid/ping',response=>{
+        const chunks=[];response.on('data',x=>chunks.push(x));response.on('end',()=>resolve(Buffer.concat(chunks).toString('utf8')));
+      });
+      request.on('error',reject);
+    });
+    assert.equal(body,'late-proxy');
+    network.restore();
+    assert.deepEqual([http.get,http.request,http.globalAgent,https.get,https.request,https.globalAgent],before);
+  } finally {
+    network?.restore();proxy.closeAllConnections();await new Promise(ok=>proxy.close(ok));
+    await fs.rm(dir,{recursive:true,force:true});
+  }
 });

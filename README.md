@@ -7,6 +7,7 @@
 ## Features
 
 - Discord and Feishu adapters live in the same package with independent credentials and connection lifecycles.
+- **Automatic channel recovery:** Each SDK handles ordinary reconnects first; a lightweight health supervisor retries failed initial connections or persistent disconnects with backoff and rate limits. Feishu uses SDK WebSocket health and ping liveness, while Discord retains Gateway resume. Recovery can refresh the configured network proxy without restarting DSH. A disabled channel stays disabled, and reconnects wait for active message delivery to finish.
 - Map verified direct messages from the same owner to a shared **native DSH session** when explicitly configured.
 - Durable inbound receipts, serialized session admission, and native steer/queue/interrupt handling avoid replaying messages.
 - Native Ask User interactions and progress/status integration preserve conversational continuity.

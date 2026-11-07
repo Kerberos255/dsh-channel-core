@@ -4,6 +4,8 @@ import { renderFooter } from './footer.js';
 import { afterPresentedContext } from './question-context.js';
 import { formatAskUserDraft,formatFinalWithQuotedDraft } from './final-format.js';
 import { completedAskUserText } from '../../lib/answered-question.js';
+import { TERMINAL_GATEWAY_CODES } from '../../lib/discord-recovery.js';
+import { awaitDiscordStartup } from '../../lib/discord-startup.js';
 import { currentSelection, decodeModel, defaultEffort, describeSelection, effortChoices, modelChoices } from './model-commands.js';
 
 // Discord 的"正在输入"提示约 10 秒后自动消失，所以按心跳刷新；上限是保险丝，
@@ -38,7 +40,7 @@ export const closeDetail=(event,readyAtMs,now=Date.now())=>{
   const reason=typeof raw==='string'&&raw.trim()?raw.trim().slice(0,120):null;
   return {code,reason,uptimeMs:Number.isFinite(readyAtMs)?Math.max(0,now-readyAtMs):null};
 };
-export async function createTransport({config,credentials,signal,receive,state,diagnostic,action,sessions,host,statusPanel},sdkOverride){
+export async function createTransport({config,credentials,signal,receive,state,diagnostic,action,sessions,host,statusPanel,skipCommandSync=false,onCommandsSynced},sdkOverride){
   const sdk=sdkOverride??await import('discord.js');
   const client=new sdk.Client({intents:[sdk.GatewayIntentBits.Guilds,sdk.GatewayIntentBits.GuildMessages,sdk.GatewayIntentBits.DirectMessages,sdk.GatewayIntentBits.MessageContent],partials:[sdk.Partials.Channel],
     rest:{timeout:15000,retries:0},makeCache:sdk.Options.cacheWithLimits({MessageManager:0,ThreadManager:100,GuildMemberManager:0,PresenceManager:0})});
@@ -175,7 +177,13 @@ export async function createTransport({config,credentials,signal,receive,state,d
       if(interaction.deferred||interaction.replied)await interaction.followUp(body).catch(()=>{});else await interaction.reply(body).catch(()=>{});
     }
   });
-  let lastCloseAt=null;
+  let lastCloseAt=null,lastCloseCode=null;
+  const gatewayHealth=()=>({
+    ready:!signal.aborted&&client.isReady?.()===true&&(!Number.isInteger(client.ws?.status)||client.ws.status===0),
+    recovering:!signal.aborted&&client.isReady?.()!==true,
+    terminal:TERMINAL_GATEWAY_CODES.has(lastCloseCode),
+    code:lastCloseCode,
+  });
   on('error',error=>{
     diagnostic?.('warn','channel.discord-error',{code:Number.isInteger(error?.code)?error.code:null,name:String(error?.name??'').slice(0,48)});
     state('Discord 连接发生错误');
@@ -183,17 +191,18 @@ export async function createTransport({config,credentials,signal,receive,state,d
   on('shardReconnecting',()=>state('Discord 正在重连…',false));
   on('shardDisconnect',(event,shardId)=>{
     const detail=closeDetail(event,client.readyAt?.getTime());
-    lastCloseAt=Date.now();
+    lastCloseAt=Date.now();lastCloseCode=detail.code;
     // A close code is the only way to separate a Discord-side close from a
     // broken transport; keep it structured and never surface raw payloads.
-    diagnostic?.('warn','channel.discord-close',{...detail,shardId:Number.isInteger(shardId)?shardId:null});
+    diagnostic?.('warn','channel.discord-close',{code:detail.code,uptimeMs:detail.uptimeMs,shardId:Number.isInteger(shardId)?shardId:null});
     state(detail.code===null?'Discord 连接已断开，等待重连…':`Discord 连接已断开（关闭码 ${detail.code}），等待重连…`,false);
   });
   on('shardResume',()=>{
+    lastCloseCode=null;
     diagnostic?.('info','channel.discord-resume',{gapMs:lastCloseAt===null?null:Date.now()-lastCloseAt});
     state('Discord 已重新连接',true);
   });
-  on('clientReady',()=>state('Discord 已连接',true));
+  on('clientReady',()=>{lastCloseCode=null;state('Discord 已连接',true);});
   async function channelFor(origin){checkAbort(signal);const channel=await client.channels.fetch(origin.threadId??origin.conversationId);if(!channel?.isTextBased())throw Object.assign(new Error('channel-unavailable'),{definitelyNotSent:true});return channel;}
   const typing=new Map();
   function stopTyping(origin){
@@ -325,9 +334,10 @@ export async function createTransport({config,credentials,signal,receive,state,d
     showNarration:config.streaming.mode==='progress'&&config.streaming.progress.narration,
     showPublicDrafts:config.streaming.mode==='progress'&&config.streaming.progress.draft,
     details:()=>({applicationId:client.application?.id??'',botId:client.user?.id??''}),
+    health:gatewayHealth,
     async start(){
-      await client.login(credentials[0]);checkAbort(signal);
-      if(config.registerCommands){
+      await awaitDiscordStartup(client,credentials[0],signal);checkAbort(signal);
+      if(config.registerCommands&&!skipCommandSync){
         // Register all replacements before retiring anything, then sync: `create`
         // only adds or updates, so a command dropped from the list (the old /prompt
         // shim) would otherwise stay visible in Discord forever.
@@ -337,6 +347,7 @@ export async function createTransport({config,credentials,signal,receive,state,d
           const list=registered?.values?[...registered.values()]:(Array.isArray(registered)?registered:[]);
           const keep=new Set(slashCommands.map(command=>command.name));
           for(const item of list)if(!keep.has(item.name))await client.application.commands.delete(item.id);
+          onCommandsSynced?.();
         }catch(error){
           // Cleanup problems must not disconnect otherwise healthy channels.
           state('Discord 旧命令清理未完成：'+String(error?.code??'api-error').slice(0,40),false);
