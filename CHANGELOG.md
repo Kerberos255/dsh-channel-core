@@ -15,7 +15,7 @@
 - Add signal, cancellation, authorization, and transport regressions. Keep default CI independent of DSH peers, and make the SDK-backed network fixture use project dependencies and temporary directories.
 
 
-This file holds historical behavior notes formerly embedded in README. For current setup and behavior, start with [README.md](README.md) or [简体中文](README.zh-CN.md).
+This file holds historical behavior notes formerly embedded in README. For current setup and behavior, start with [简体中文](README.md) or [English](README.en.md).
 
 ## 0.6.3
 
