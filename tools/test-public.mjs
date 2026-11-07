@@ -16,6 +16,7 @@ const files=[
   "tests/feishu-steer-segmentation.test.mjs",
   "tests/memory-access.test.mjs",
   "tests/new-session-migration.test.mjs",
+  "tests/schedule-host-compat.test.mjs",
   "tests/outbound-agent-tool.test.mjs",
   "tests/proactive-outbound.test.mjs",
   "tests/progress-lines.test.mjs",
