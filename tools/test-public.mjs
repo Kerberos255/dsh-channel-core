@@ -26,6 +26,7 @@ const files=[
   "tests/retired-route.test.mjs",
   "tests/rotation.test.mjs",
   "tests/task-notifications.test.mjs",
+  "tests/settings-client-interactions.test.mjs",
   "tests/tool-detail.test.mjs"
 ];
 const root=fileURLToPath(new URL('../',import.meta.url));

@@ -2,7 +2,7 @@
 const checked=(kind,res)=>{if(res?.code&&res.code!==0)throw Object.assign(new Error('feishu-cardkit-'+kind+'-'+res.code),{code:res.code});return res;};
 /** The progress text has a stable element ID across structural updates. */
 export function streamingCard(payload){
- return {...payload,config:{...payload.config,streaming_mode:true},
+ return {...payload,config:{...payload.config,streaming_mode:true,streaming_config:{print_frequency_ms:{default:70,pc:70,android:70,ios:70},print_step:{default:4,pc:4,android:4,ios:4},print_strategy:'fast'}},
   body:{...payload.body,elements:payload.body.elements.map((v,i)=>i===0?
     {...v,element_id:'dsh_progress_text'}:v)}};
 }
@@ -38,21 +38,21 @@ export function createCardKitChannel(channel){
    const sequence=record.sequence+1;
    record.sequence=sequence; // sequence must not be reused after an ambiguous network error
    await run('content',()=>kit.cardElement.content({data:{content,sequence},path:{card_id:record.cardId,element_id:'dsh_progress_text'}}));
-   record.sequence=sequence;record.text=content;
+   record.text=content;
   },
   async update(record,payload){
    const sequence=record.sequence+1;
    record.sequence=sequence;
    await run('update',()=>kit.card.update({path:{card_id:record.cardId},data:{card:{type:'card_json',data:JSON.stringify(payload)},sequence}}));
-   record.sequence=sequence;record.text=payload.body?.elements?.[0]?.content;
+   record.text=payload.body?.elements?.[0]?.content;
    record.structural=JSON.stringify({header:payload.header,extra:payload.body?.elements?.slice(1)});
   },
   async close(record){
    if(!record.streaming)return;
    const sequence=record.sequence+1;
    record.sequence=sequence;
-   await run('settings',()=>kit.card.settings({path:{card_id:record.cardId},data:{settings:JSON.stringify({streaming_mode:false}),sequence}}));
-   record.sequence=sequence;record.streaming=false;
+   await run('settings',()=>kit.card.settings({path:{card_id:record.cardId},data:{settings:JSON.stringify({config:{streaming_mode:false}}),sequence}}));
+   record.streaming=false;
   },
  };
 }

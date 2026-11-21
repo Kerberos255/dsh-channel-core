@@ -239,15 +239,18 @@ test('Feishu title resolves real Agent name and footer only renders grounded ses
    await t.progress(origin,{sessionId:'s1',status:'thinking',activity:{timeline:[]}});
    const first=f.calls[0].body.card;
    assert.equal(first.header.title.content,'小虎鲸 · 正在思考');
-   const footer=first.body.elements.at(-1);
-   assert.equal(footer.text_size,'notation');
-   assert(footer.content.includes('opencode-go/deepseek-v4-flash'));
-   assert(footer.content.includes('335.7k/1M'));
+   assert.equal(first.body.elements.length,1,'streaming cards do not update dynamic footer');
+   assert.equal(modelCalls.length,0,'metrics are read only for completed cards');
    await t.send(origin,{sessionId:'s1',status:'completed',text:'任务完成',durationMs:2000});
    const final=f.calls.at(-1).payload;
    assert.equal(final.header.title.content,'小虎鲸 · 已完成');
-   assert(final.body.elements.at(-1).content.includes('opencode-go/deepseek-v4-flash'));
-   assert.deepEqual(modelCalls,['s1','s1']);
+   assert.equal(final.body.elements.at(-2).tag,'hr');
+   const footer=final.body.elements.at(-1);
+   assert.equal(footer.text_size,'notation');
+   assert.match(footer.content,/<font color='grey'>/);
+   assert(footer.content.includes('opencode-go/deepseek-v4-flash'));
+   assert(footer.content.includes('335.7k/1M'));
+   assert.deepEqual(modelCalls,['s1']);
  }finally{await t.close();}
 });
 
@@ -259,7 +262,8 @@ test('Feishu final multi-part answer puts a single footer only on last card and 
  assert(cards.length>1);
  assert.equal(cards.map(x=>x.body.elements[0].content).join(''),original);
  for(const c of cards.slice(0,-1))assert.equal(c.body.elements.length,1);
- assert.equal(cards.at(-1).body.elements.at(-1).content,'模型 · 上下文 20k/1M');
+ assert.equal(cards.at(-1).body.elements.at(-2).tag,'hr');
+ assert.equal(cards.at(-1).body.elements.at(-1).content,"<font color='grey'>模型 · 上下文 20k/1M</font>");
  assert(cards.every(x=>Buffer.byteLength(JSON.stringify(x),'utf8')<=24000));
 });
 
@@ -384,7 +388,9 @@ test('CardKit uses streaming element updates, monotonic sequences and finalizes 
   assert.equal(kit.calls[3].request.data.sequence,3);
   assert.equal(kit.calls[4].request.data.sequence,4);
   assert.equal(kit.calls[5].request.data.sequence,5);
-  assert.equal(kit.calls[4].request.data.settings,'{"streaming_mode":false}');
+  assert.equal(kit.calls[4].request.data.settings,'{"config":{"streaming_mode":false}}');
+  assert.equal(initial.config.streaming_config.print_strategy,'fast');
+  assert.equal(JSON.parse(kit.calls[5].request.data.card.data).config.streaming_mode,false);
   assert.equal(JSON.parse(kit.calls[5].request.data.card.data).body.elements[0].content,'最后答复');
   assert.equal(f.calls.length,0,'no legacy IM send or patch in healthy CardKit path');
  }finally{await t.close()}
@@ -568,13 +574,99 @@ test('Feishu Ask User preserves committed context and creates an independent int
   assert.equal(f.calls[2].body.card.body.elements[0].content,'请选择下一步');
   assert.equal(f.calls[2].body.card.body.elements[1].behaviors[0].value.dsh,'token1');
   await t.question(dm,{status:'waiting-user',text:'请选择其他项',context:'分析完成，等待确认。'},[{label:'更改',token:'token2'}]);
-  assert.equal(f.calls.at(-1).type,'update','same question card is updated for multiple answers');
+  assert.equal(f.calls.filter(c=>c.type==='send').length,3,'the next question is a distinct card');
+  assert.equal(f.calls.at(-1).type,'update','the previous question is retired after the new one is sent');
   assert.equal(f.calls.at(-1).id,'card-2');
+  assert.equal(f.calls.at(-1).payload.body.elements.length,1,'old question has no clickable controls');
   await t.send(dm,{status:'completed',text:'最终答复',publicDrafts:['分析完成，等待确认。']});
   assert.equal(f.calls.filter(c=>c.type==='send').at(-1).body.card.body.elements[0].content,'最终答复');
-  assert.equal(f.calls.at(-1).id,'card-2','obsolete question card is disabled, not left clickable');
+  assert.equal(f.calls.at(-1).id,'card-3','the second question card is retired, not the first');
   assert.equal(f.calls.at(-1).payload.body.elements[0].content,'请选择其他项\n\n⚠️ 原回答请求已失效，请重新发起提问。');
-  assert.equal(f.calls.filter(c=>c.type==='send').length,3);
+  assert.equal(f.calls.filter(c=>c.type==='send').length,4);
+ }finally{await t.close();}
+});
+
+test('Feishu question transitions keep each card distinct and retire previous controls',async()=>{
+ const f=fixture(),t=await f.create();
+ try{
+   await t.question(origin,{status:'waiting-user',text:'1/2 · 第一题'},[{label:'甲',token:'step-one'}]);
+   const first=f.calls.filter(c=>c.type==='send').at(-1);
+   assert.equal(first.body.card.body.elements[0].content,'1/2 · 第一题');
+   await t.question(origin,{status:'waiting-user',text:'2/2 · 第二题'},[{label:'乙',token:'step-two'}]);
+   const sent=f.calls.filter(c=>c.type==='send');
+   assert.equal(sent.length,2);
+   assert.equal(sent[1].body.card.body.elements[1].behaviors[0].value.dsh,'step-two');
+   const prior=f.calls.find(c=>c.type==='update'&&c.id==='card-1');
+   assert(prior,'first card was retired without replacing its question');
+   assert.equal(prior.payload.header.title.content,'Agent · 已回答');
+   assert(prior.payload.body.elements[0].content.includes('本题已提交'));
+   assert.equal(prior.payload.body.elements.length,1);
+   assert(!JSON.stringify(sent[1].body.card).includes('step-one'));
+ }finally{await t.close();}
+});
+
+test('stale callback from prior Feishu question never invalidates the latest card',async()=>{
+ const f=fixture({mode:'progress',cardEngine:'patch'},{
+   action:async()=>{throw Object.assign(new Error('old'),{code:'stale-interaction'});}
+ }),t=await f.create();
+ try{
+   await t.question(origin,{status:'waiting-user',text:'旧题'},[{label:'旧选项',token:'old-choice'}]);
+   t.questionAccepted(origin,'card-1');
+   await t.question(origin,{status:'waiting-user',text:'新题'},[{label:'新选项',token:'new-choice'}]);
+   const reply=await f.listeners.get('cardAction')({
+     action:{value:{dsh:'old-choice'}},operator:{openId:origin.userId},
+     chatId:origin.conversationId,messageId:'card-1'
+   });
+   assert.equal(reply.toast.type,'error');
+   assert.match(reply.toast.content,/最新问题卡/);
+   assert.equal(f.calls.filter(c=>c.type==='send').length,2);
+   assert.equal(f.calls.filter(c=>c.type==='update'&&c.id==='card-2').length,0,
+     'the current question must never be changed by an old callback');
+ }finally{await t.close();}
+});
+
+test('duplicate click after accepted final answer does not convert card into invalid state',async()=>{
+ const f=fixture({mode:'progress',cardEngine:'patch'},{
+   action:async()=>{throw Object.assign(new Error('duplicate'),{code:'stale-interaction'});}
+ }),t=await f.create();
+ try{
+   await t.question(origin,{status:'waiting-user',text:'已确认事项'},[{label:'确认',token:'duplicate'}]);
+   t.questionAccepted(origin,'card-1');
+   const reply=await f.listeners.get('cardAction')({
+     action:{value:{dsh:'duplicate'}},operator:{openId:origin.userId},
+     chatId:origin.conversationId,messageId:'card-1'
+   });
+   assert.equal(reply.toast.type,'error');
+   const update=f.calls.find(c=>c.type==='update'&&c.id==='card-1');
+   assert.equal(update.payload.header.title.content,'Agent · 已回答');
+   assert(!update.payload.body.elements[0].content.includes('下一张问题卡'));
+ }finally{await t.close();}
+});
+
+test('Feishu failure to retire a prior card does not block later questions',async()=>{
+ const notices=[];
+ const f=fixture({mode:'progress'},{failUpdate:500,state:message=>notices.push(message)}),t=await f.create();
+ try{
+   await t.question(origin,{status:'waiting-user',text:'1/3 · A'},[{label:'A',token:'a1'}]);
+   await t.question(origin,{status:'waiting-user',text:'2/3 · B'},[{label:'B',token:'b2'}]);
+   await t.question(origin,{status:'waiting-user',text:'3/3 · C'},[{label:'C',token:'c3'}]);
+   assert.equal(f.calls.filter(c=>c.type==='send').length,3,'all questions are published');
+   assert(f.calls.some(c=>c.type==='update'&&c.id==='card-1'));
+   assert(f.calls.some(c=>c.type==='update'&&c.id==='card-2'));
+   assert(notices.some(s=>s.includes('问题卡更新失败')),'failure is observable');
+ }finally{await t.close();}
+});
+
+test('Feishu acknowledged final answer is not marked invalid by immediate final delivery',async()=>{
+ const f=fixture(),t=await f.create();
+ try{
+   await t.question(origin,{status:'waiting-user',text:'确认操作？'},[{label:'是',token:'yes'}]);
+   t.questionAccepted(origin,'card-1');
+   await t.send(origin,{status:'completed',text:'操作已完成'});
+   const completed=f.calls.find(c=>c.type==='update'&&c.id==='card-1');
+   assert(completed);
+   assert.equal(completed.payload.header.title.content,'Agent · 已回答');
+   assert(completed.payload.body.elements[0].content.includes('已回答'));
  }finally{await t.close();}
 });
 

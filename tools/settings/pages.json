@@ -239,7 +239,7 @@
             "仅最终回复（off）"
           ]
         ],
-        "help": "进度模式交替滚动显示草稿和工具；Discord 完成后仅保留正文，飞书完成后分别显示折叠草稿卡和独立正文卡。",
+        "help": "进度模式显示草稿和工具；Discord 完成后保留正文，飞书完成后将过程整理为「阶段记录」折叠卡并另发正文。",
         "advanced": false
       },
       {
@@ -250,6 +250,60 @@
         "placeholder": "🐋",
         "help": "Discord 进度及提问消息头的自定义图标，默认 🐋。推荐单个 Emoji 或组合 Emoji。",
         "advanced": false
+      },
+      {
+        "key": "streaming.progress.toolProgress",
+        "label": "显示工具进度",
+        "type": "boolean",
+        "group": "回复与显示",
+        "advanced": false,
+        "when": {
+          "streaming.mode": "progress"
+        }
+      },
+      {
+        "key": "streaming.progress.commentary",
+        "label": "显示简短执行说明",
+        "type": "boolean",
+        "group": "回复与显示",
+        "advanced": false,
+        "when": {
+          "streaming.mode": "progress"
+        },
+        "help": "显示已提交的阶段性公开文字与简短执行说明；不展示未提交草稿。"
+      },
+      {
+        "key": "streaming.progress.toolDetail",
+        "label": "显示命令与目标摘要",
+        "type": "boolean",
+        "group": "回复与显示",
+        "advanced": false,
+        "when": {
+          "streaming.mode": "progress"
+        },
+        "help": "在工具名后附上简短目标，例如“执行命令 · npm pack”；敏感内容自动打码。"
+      },
+      {
+        "key": "streaming.progress.draft",
+        "label": "显示草稿过程",
+        "type": "boolean",
+        "group": "回复与显示",
+        "advanced": false,
+        "when": {
+          "streaming.mode": "progress"
+        },
+        "help": "决定是否在最终回复中保留已提交草稿；默认开启。"
+      },
+      {
+        "key": "streaming.progress.narration",
+        "label": "显示思考",
+        "type": "boolean",
+        "group": "回复与显示",
+        "advanced": false,
+        "when": {
+          "streaming.mode": "progress"
+        },
+        "help": "仅在主人 Discord 私聊中，显示尚未提交的实时思考和正文草稿；群聊不展示，默认关闭。"
       },
       {
         "key": "streaming.footer.status",
@@ -304,60 +358,6 @@
         "advanced": false,
         "fold": "更多显示设置",
         "help": "默认关闭；仅在原生运行指标可用时显示。"
-      },
-      {
-        "key": "streaming.progress.toolProgress",
-        "label": "显示工具进度",
-        "type": "boolean",
-        "group": "回复与显示",
-        "advanced": false,
-        "when": {
-          "streaming.mode": "progress"
-        }
-      },
-      {
-        "key": "streaming.progress.commentary",
-        "label": "显示简短执行说明",
-        "type": "boolean",
-        "group": "回复与显示",
-        "advanced": false,
-        "when": {
-          "streaming.mode": "progress"
-        },
-        "help": "显示模型已提交的阶段性公开文字（📝 草稿）与简短执行说明（💬）；不包含尚未提交的实时正文草稿。任务完成后不保留中间进度。"
-      },
-      {
-        "key": "streaming.progress.toolDetail",
-        "label": "显示命令与目标摘要",
-        "type": "boolean",
-        "group": "回复与显示",
-        "advanced": false,
-        "when": {
-          "streaming.mode": "progress"
-        },
-        "help": "在工具名后附上简短目标，例如“执行命令 · npm pack”；敏感内容自动打码。"
-      },
-      {
-        "key": "streaming.progress.draft",
-        "label": "显示草稿过程",
-        "type": "boolean",
-        "group": "回复与显示",
-        "advanced": false,
-        "when": {
-          "streaming.mode": "progress"
-        },
-        "help": "控制最终回复是否保留本轮的草稿过程，关闭后只发送正式回复。与「显示思考」不同：那个控制进度卡里的未提交内容。默认开启。"
-      },
-      {
-        "key": "streaming.progress.narration",
-        "label": "显示思考",
-        "type": "boolean",
-        "group": "回复与显示",
-        "advanced": false,
-        "when": {
-          "streaming.mode": "progress"
-        },
-        "help": "仅在已认领主人的 Discord 私聊中，显示模型实际产生的思考，以及正在生成、尚未提交的正文草稿。已提交的阶段性公开文字由「显示简短执行说明」控制。群聊和其他私聊不会展示未提交内容；任务结束后清除临时进度。默认关闭。"
       },
       {
         "key": "throttleMs",
@@ -489,7 +489,10 @@
         "type": "number",
         "min": 1,
         "max": 20,
-        "advanced": false
+        "advanced": false,
+        "when": {
+          "attachments": true
+        }
       }
     ],
     "credentialTitle": "机器人凭证",
@@ -560,7 +563,7 @@
         "key": "appSecretRef",
         "label": "凭证名称",
         "type": "text",
-        "help": "密钥在下方凭证区单独保存，config.json 只保存引用名称。",
+        "help": "密钥在上方应用密钥区单独保存，config.json 只保存引用名称。",
         "group": "账号与连接",
         "advanced": false,
         "fold": "更多连接设置"
@@ -570,8 +573,9 @@
         "group": "接收与权限",
         "label": "允许使用的用户 ID",
         "type": "list",
-        "help": "每行一个；留空时仍可连接，但不接收会话消息。",
-        "advanced": false
+        "help": "允许使用的用户 ID，每行一个；主人首次私聊认领遵循主人认领模式，其它人按白名单校验。",
+        "advanced": false,
+        "emptyHelp": "首次私聊认领模式下，空列表仍允许第一个私聊用户成为主人；其它用户不会自动获得权限。"
       },
       {
         "key": "allowGroups",
@@ -586,7 +590,10 @@
         "type": "boolean",
         "group": "接收与权限",
         "advanced": false,
-        "help": "开启后，收到新群消息时会自动把该群加入下面的名单，省去手工查找群 ID。注意：群成员仍需在「允许的用户」名单中才会被响应。默认关闭。"
+        "help": "开启后自动收录新群；仅处理「允许使用的用户 ID」中的成员发来的消息，默认关闭。",
+        "when": {
+          "allowGroups": true
+        }
       },
       {
         "key": "allowedGroups",
@@ -695,25 +702,7 @@
             "仅最终回复（off）"
           ]
         ],
-        "help": "进度模式显示草稿、思考（独立开关）和工具；Discord 完成后仅保留正文，飞书完成后分别显示「过程记录」折叠卡和独立正文卡。",
-        "advanced": false
-      },
-      {
-        "key": "streaming.cardEngine",
-        "group": "回复与显示",
-        "label": "飞书卡片引擎",
-        "type": "select",
-        "options": [
-          [
-            "cardkit",
-            "CardKit 流式组件（推荐）"
-          ],
-          [
-            "patch",
-            "兼容模式（整卡更新）"
-          ]
-        ],
-        "help": "默认 CardKit：流式文字更新卡片文本组件，结束或提问时再更新完整卡片。创建 CardKit 卡片失败且尚未发消息时自动回退兼容模式；无法确认消息是否已经发出时不会盲目重试，避免重复卡片。刷新间隔仍按下方设置。",
+        "help": "进度模式显示草稿、思考（独立开关）和工具；完成后显示「阶段记录」折叠卡及独立正文卡。",
         "advanced": false
       },
       {
@@ -735,7 +724,7 @@
         "when": {
           "streaming.mode": "progress"
         },
-        "help": "显示模型公开的简短执行说明；最终回复不保留工具进度。"
+        "help": "显示已公开的简短执行说明；群聊只显示允许公开的内容。"
       },
       {
         "key": "streaming.progress.toolDetail",
@@ -757,7 +746,7 @@
         "when": {
           "streaming.mode": "progress"
         },
-        "help": "控制最终回复是否保留本轮的草稿过程，关闭后只发送正式回复。与「显示思考」不同：那个控制进度卡里的未提交内容。默认开启。"
+        "help": "最终保留公开草稿为「阶段记录」；关闭后只保留正式回复。"
       },
       {
         "key": "streaming.progress.narration",
@@ -768,7 +757,34 @@
         "when": {
           "streaming.mode": "progress"
         },
-        "help": "仅在已认领主人的飞书私聊显示真实思考；草稿有独立开关。结束后有过程文字时归入默认折叠的「过程记录」，默认关闭。"
+        "help": "仅在主人的飞书私聊中显示模型思考；默认关闭。"
+      },
+      {
+        "key": "streaming.cardEngine",
+        "group": "回复与显示",
+        "label": "飞书卡片引擎",
+        "type": "select",
+        "options": [
+          [
+            "cardkit",
+            "CardKit 流式组件（推荐）"
+          ],
+          [
+            "patch",
+            "兼容模式（整卡更新）"
+          ]
+        ],
+        "help": "默认 CardKit：流式文字更新卡片文本组件，结束或提问时再更新完整卡片。创建 CardKit 卡片失败且尚未发消息时自动回退兼容模式；无法确认消息是否已经发出时不会盲目重试，避免重复卡片。刷新间隔仍按下方设置。",
+        "advanced": false,
+        "when": [
+          {
+            "streaming.mode": "progress"
+          },
+          {
+            "streaming.mode": "partial"
+          }
+        ],
+        "fold": "更多显示设置"
       },
       {
         "key": "throttleMs",
@@ -787,7 +803,7 @@
           }
         ],
         "fold": "更多显示设置",
-        "help": "当前默认 750 毫秒，将多次进度变化合并后更新同一张飞书卡片。openclaw-lark 的 CardKit 和普通消息 Patch 参考值分别约 100/1500 毫秒，属于不同路径，不应照搬为安全阈值。"
+        "help": "默认 750 毫秒：合并期间的进度变化后刷新飞书卡片；设置过短可能触发频控，但不会加快模型生成。"
       },
       {
         "key": "streaming.progress.maxLines",
@@ -911,7 +927,7 @@
         "when": {
           "ownerMode": "manual"
         },
-        "help": "手动模式填写 Discord 用户 ID 或飞书 open_id，保存后立即覆盖该渠道主人。两个渠道分别认领，统一访问 DSH 主人记忆。",
+        "help": "手动填写飞书 open_id，保存后覆盖该飞书渠道的主人。",
         "advanced": false
       },
       {
@@ -954,7 +970,10 @@
         "type": "number",
         "min": 1,
         "max": 20,
-        "advanced": false
+        "advanced": false,
+        "when": {
+          "attachments": true
+        }
       }
     ]
   }

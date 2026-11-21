@@ -19,6 +19,7 @@ jobs:
           node --check tools/test-public.mjs
           node --check lib/proactive-outbound.js
           node --check tests/proactive-outbound.test.mjs
+          node --check lib/footer.js
           node --check lib/bridge.js
           node --check lib/progress-lines.js
           node --check lib/client.js
@@ -27,5 +28,7 @@ jobs:
           node --check channels/feishu/config.js
           node --check channels/feishu/cardkit.js
           node --check channels/feishu/tests/progress.test.mjs
+          node --check channels/feishu/tests/hardening.test.mjs
+          node --check tests/settings-client-interactions.test.mjs
           node --check tests/bridge.test.mjs
       - run: npm pack --dry-run

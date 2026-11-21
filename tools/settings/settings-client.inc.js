@@ -79,12 +79,22 @@ function FileConfigPage({ scope, title, description, fields, actionLabel, creden
   const [editor, setEditor] = React.useState({ base: null, draft: null, error: '', saved: false });
   const [busy, setBusy] = React.useState(false);
   const busyRef = React.useRef(false), alive = React.useRef(false);
-  const dirty = !!editor.base && JSON.stringify(editor.draft) !== JSON.stringify(editor.base.value);
+  const dirty = !!editor.base && (JSON.stringify(editor.draft) !== JSON.stringify(editor.base.value)
+    || Object.entries(editor.listText??{}).some(([key,value])=>value!==(configValue(editor.base.value,key)??[]).join('\n'))
+    || Object.entries(editor.numberText??{}).some(([key,value])=>value!==String(configValue(editor.base.value,key)??'')));
   const external = !!editor.base && snapshot.revision !== editor.base.revision;
   React.useEffect(() => {
     if (snapshot.status !== 'ready') return;
-    setEditor(previous => !previous.base || (!busyRef.current && JSON.stringify(previous.draft) === JSON.stringify(previous.base.value))
-      ? { base: snapshot, draft: structuredClone(snapshot.value), error: '', saved: previous.saved } : previous);
+    setEditor(previous => {
+      if(!previous.base)return {base:snapshot,draft:structuredClone(snapshot.value),error:'',saved:false};
+      // A poll with unchanged revision/details must preserve raw input buffers.
+      if(previous.base.revision===snapshot.revision
+        && JSON.stringify(previous.base.details??{})===JSON.stringify(snapshot.details??{}))return previous;
+      const buffered=Object.entries(previous.listText??{}).some(([key,text])=>text!==(configValue(previous.base.value,key)??[]).join('\n'))
+        || Object.entries(previous.numberText??{}).some(([key,text])=>text!==String(configValue(previous.base.value,key)??''));
+      if(busyRef.current||buffered||JSON.stringify(previous.draft)!==JSON.stringify(previous.base.value))return previous;
+      return {base:snapshot,draft:structuredClone(snapshot.value),error:'',saved:previous.saved};
+    });
   }, [snapshot]);
   React.useEffect(() => {
     alive.current = true;
@@ -112,14 +122,24 @@ function FileConfigPage({ scope, title, description, fields, actionLabel, creden
     const value = configValue(editor.draft,spec.key), id = 'dsh-config-' + spec.key;
     const common = { id, disabled: disabled || spec.disabled, 'aria-label': spec.label };
     let input;
-    if (spec.type === 'credential') return e('div',{className:'dpc-field dpc-credential',key:spec.key},
-      e('div',{className:'dpc-label'},e('span',null,spec.label),e('small',null,'独立保存到 DSH 凭证管理，不会写入渠道配置文件。')),
-      e('div',{className:'dpc-control'},credentialApi&&credentials&&snapshot.value
-        ?e(CredentialsPage,{api:credentialApi,refs:credentials(snapshot.value),writable:snapshot.writable,title:spec.label,inline:true})
-        :e('small',null,'凭证服务暂不可用')));
+    if (spec.type === 'credential') {
+      const refChanged=credentials&&snapshot.value&&editor.draft
+        &&JSON.stringify(Object.keys(credentials(snapshot.value)))!==JSON.stringify(Object.keys(credentials(editor.draft)));
+      return e('div',{className:'dpc-field dpc-credential',key:spec.key},
+        e('div',{className:'dpc-label'},e('span',null,spec.label),e('small',null,'独立保存到 DSH 凭证管理，不会写入渠道配置文件。')),
+        e('div',{className:'dpc-control'},refChanged?e('small',{role:'status'},'凭证名称尚未保存，请先保存渠道设置，再保存密钥。'):null,
+          credentialApi&&credentials&&snapshot.value
+          ?e(CredentialsPage,{api:credentialApi,refs:credentials(snapshot.value),writable:snapshot.writable&&!refChanged,title:spec.label,inline:true})
+          :e('small',null,'凭证服务暂不可用')));
+    }
     if (spec.type === 'readonly') input = e('div', { className: 'dpc-status', id }, snapshot.details?.[spec.detail] ?? spec.placeholder ?? '—');
     else if (spec.type === 'boolean') input = e(DshSwitch, { label: spec.label, disabled: common.disabled, checked: value, onChange: next => change(spec.key, next) });
-    else if (spec.type === 'multiline') input = e('textarea', {...common,rows:5,value,onChange:event=>change(spec.key,event.target.value)});
+    else if (spec.type === 'multiline') {
+      const editor=e('textarea', {...common,rows:5,value,onChange:event=>change(spec.key,event.target.value)});
+      input=spec.defaultValue===undefined?editor:e('div',{className:'dpc-prompt-editor'},editor,
+        e(DshButton,{type:'button',variant:'ghost',size:'sm',disabled:common.disabled||value===spec.defaultValue,
+          onClick:()=>change(spec.key,spec.defaultValue)},'恢复默认'));
+    }
     else if (spec.type === 'list') input = e('textarea', {...common, rows: Math.max(3,Math.min(8,value.length+1)), value:editor.listText?.[spec.key]??value.join('\n'),
       onChange:event=>{const text=event.target.value;setEditor(previous=>({...previous,draft:configChange(previous.draft,spec.key,text.split(/[\n,]/).map(item=>item.trim()).filter(Boolean)),listText:{...previous.listText,[spec.key]:text},error:'',errorCode:'',saved:false}));} });
     else if (spec.type === 'role') input = e(RolePicker,{scope,value,disabled:common.disabled,label:spec.label,onChange:next=>change(spec.key,next)});
@@ -139,9 +159,17 @@ function FileConfigPage({ scope, title, description, fields, actionLabel, creden
     else if (spec.type === 'choices') input = e('div', null, Object.entries(spec.labels).map(([key, label]) => e('label', { className: 'dpc-choice', key }, e('input', {
       type: 'checkbox', checked: value.includes(key), disabled, onChange: event => change(spec.key, event.target.checked ? [...value, key] : value.filter(x => x !== key)),
     }), ' ', label)));
-    else input = e('input', { ...common, type: spec.type === 'number' ? 'number' : 'text', value,
+    else input = e('input', { ...common, type: spec.type === 'number' ? 'number' : 'text',
+      value:spec.type==='number'?(editor.numberText?.[spec.key]??String(value??'')):value,
+      required:spec.type==='number',
       min: spec.min, max: spec.max, step: spec.step ?? 1,
-      onChange: event => change(spec.key, spec.type === 'number' ? Number(event.target.value) : event.target.value),
+      onChange: event => {
+        if(spec.type!=='number'){change(spec.key,event.target.value);return;}
+        const text=event.target.value,number=Number(text);
+        setEditor(previous=>({...previous,numberText:{...previous.numberText,[spec.key]:text},
+          draft:text!==''&&Number.isFinite(number)?configChange(previous.draft,spec.key,number):previous.draft,
+          error:'',errorCode:'',saved:false}));
+      },
     });
     return e('div', { className: 'dpc-field dpc-' + spec.type, key: spec.key },
       e('div', { className: 'dpc-label' }, e('label', { htmlFor: spec.type === 'boolean' ? undefined : id }, spec.label), spec.help ? e('small', null, spec.help) : null, spec.emptyHelp&&Array.isArray(value)&&!value.length?e('small',null,spec.emptyHelp):null),
@@ -154,32 +182,38 @@ function FileConfigPage({ scope, title, description, fields, actionLabel, creden
       if(!groups.length||groups.at(-1).title!==(spec.group||''))groups.push({title:spec.group||'',fields:[]});
       groups.at(-1).fields.push(spec);
     }
-    const items=specs=>{
+    const items=(specs,groupTitle)=>{
       const result=[];
       for(let index=0;index<specs.length;){
         const spec=specs[index];
         if(!spec.fold){result.push(field(spec));index++;continue;}
         let end=index+1;
         while(end<specs.length&&specs[end].fold===spec.fold)end++;
-        result.push(e('details',{className:'dpc-fold',key:'fold-'+spec.key},
+        result.push(e('details',{className:'dpc-fold',key:'fold-'+groupTitle+'-'+spec.fold},
           e('summary',null,spec.fold),...specs.slice(index,end).map(field)));
         index=end;
       }
       return result;
     };
-    return groups.map((group,index)=>e('section',{className:'dpc-group',key:index},group.title?e('h4',null,group.title):null,items(group.fields)));
+    return groups.map((group,index)=>e('section',{className:'dpc-group',key:index},group.title?e('h4',null,group.title):null,items(group.fields,group.title)));
   };
   const embeddedCredentials=fields.some(spec=>spec.type==='credential');
   const credentialView=!embeddedCredentials&&credentialApi&&credentials&&snapshot.value?e(CredentialsPage,{api:credentialApi,refs:credentials(snapshot.value),writable:snapshot.writable,title:credentialTitle,expanded:credentialsFirst}):null;
   const reloadNeeded = external || snapshot.requestError || editor.errorCode?.includes('conflict');
-  return e('form', { className: 'dpc-page', 'aria-label': title, onSubmit: event => { event.preventDefault(); if (disabled || external || (!dirty && !snapshot.error)) return;
+  return e('form', { className: 'dpc-page', 'aria-label': title,
+    onInvalidCapture:event=>{
+      // Reveal a closed native-validation target before the browser focuses it.
+      for(let element=event.target.parentElement;element;element=element.parentElement)
+        if(element.tagName==='DETAILS')element.open=true;
+    },
+    onSubmit: event => { event.preventDefault(); if (disabled || external || (!dirty && !snapshot.error)) return;
     void work(async () => { const result = await scope.update(editor.draft, editor.base.revision); replace(result); if (alive.current) setEditor(previous => ({ ...previous, saved: true })); });
   } },credentialsFirst?credentialView:null,editor.draft?grouped(false):e('p',null,'正在读取配置…'),
     editor.draft&&fields.some(spec=>spec.advanced&&visible(spec))?e('details',{className:'dpc-advanced'},e('summary',null,'高级设置'),grouped(true)):null,
     snapshot.error ? e('p', { role: 'alert' }, '文件有误，运行时保留上一次有效设置。', snapshot.error.message, '；保存可修复文件。') : null,
     external ? e('p', { role: 'alert' }, '配置已被其他页面或文件编辑修改。重新载入后再保存，可避免覆盖外部修改。') : null,
     editor.error || snapshot.requestError ? e('p', { role: 'alert' }, editor.error || snapshot.requestError) : null,
-    e('div', { className: 'dpc-actions' }, e(DshButton, { type: 'submit', variant: 'primary', disabled: disabled || external || (!dirty && !snapshot.error) }, busy ? '处理中…' : '保存'),
+    e('div', { className: 'dpc-actions dpc-save-actions' }, e(DshButton, { type: 'submit', variant: 'primary', disabled: disabled || external || (!dirty && !snapshot.error) }, busy ? '处理中…' : '保存'),
       reloadNeeded ? e(DshButton, { type: 'button', variant: 'outline', disabled: busy, onClick: () => void work(async () => replace(await scope.reload())) }, dirty ? '放弃草稿并重新载入' : '重新载入') : null,
       actionLabel ? e(DshButton, { type: 'button', variant: 'outline', disabled: busy || !snapshot.writable, onClick: () => void work(async () => { await scope.runAction(); }) }, actionLabel) : null,
       e('span', { role: 'status' }, editor.saved ? '已保存并生效' : dirty ? '尚未保存' : '')),
@@ -247,6 +281,7 @@ function installConfigPage(ctx, options) {
       .dpc-status{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary);word-break:break-word;line-height:1.6}
       .dpc-field input:not([type=checkbox]),.dpc-field select,.dpc-field textarea{box-sizing:border-box;width:100%;padding:9px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:inherit;font:inherit}.dpc-field textarea{resize:vertical;line-height:1.6}
       .dpc-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:24px}
+      .dpc-page>.dpc-save-actions{position:sticky;bottom:0;z-index:5;padding:12px 8px;border-top:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1,var(--dsw-alias-bg-layer-2));border-radius:0 0 10px 10px}
       .dpc-order{margin:0;padding:0;list-style:none;display:grid;gap:4px}.dpc-order li{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;background:var(--dsw-alias-bg-layer-2)}
       .dpc-rank{font-size:12px;color:var(--dsw-alias-label-tertiary);width:20px;text-align:center;font-variant-numeric:tabular-nums}.dpc-provider-name{flex:1}.dpc-order-actions{display:flex;gap:2px}.dpc-arrow{min-width:28px;padding:0!important}
       .dpc-providers,.dpc-order{grid-template-columns:1fr;gap:12px}.dpc-choice{display:inline-flex;gap:4px;margin:4px 12px 4px 0}

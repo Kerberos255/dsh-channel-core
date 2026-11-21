@@ -1,5 +1,13 @@
 # Changelog · Channel Core
 
+## Unreleased
+
+- Serialize Feishu CardKit operations, coalesce obsolete progress frames, guard Steer boundaries, and avoid reporting unconfirmed stream closure as success.
+- Add bounded recovery after transient CardKit failures and configure per-client streaming display behavior.
+- Show subdued, escaped, divider-separated footers only on final Feishu cards; keep Discord footer formatting independent of Feishu markup.
+- Preserve unsaved edits during channel-settings refresh, keep conditional sections stable, and reveal invalid fields inside collapsed groups.
+- Keep sequential Feishu Ask User questions on distinct cards so old actions cannot invalidate the latest question.
+
 ## 0.6.5
 
 - Add read-only group/thread memory provenance checks using durable Discord/Feishu bindings and receipts; reject mixed private/group histories. Owner-DM identity verification is unchanged.

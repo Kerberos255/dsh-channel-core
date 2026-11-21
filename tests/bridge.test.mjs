@@ -708,6 +708,74 @@ test('a stale answer from an older Feishu card cannot cancel the next question',
  }finally{await f.close();}
 });
 
+test('multi-question Ask User rejects stale first-step callback without cancelling second-step answer',async()=>{
+ const f=fixture(),accepted=[];
+ const reg=f.bridge.adapters.get(JSON.stringify(['feishu','test']));
+ reg.adapter.questionAccepted=(origin,id)=>accepted.push(id);
+ try{
+   const waiting=f.bridge.interactions.request({agent:f.agent,questions:[
+     {id:'first',question:'第一题',options:[{label:'选甲'}]},
+     {id:'second',question:'第二题',options:[{label:'选乙'}]}
+   ]},()=>assert.fail());
+   await f.bridge.idle();
+   const first=f.questions.at(-1).actions[0].token;
+   const one=await f.bridge.answer({...f.origin,token:first});
+   assert.equal(one.nextQuestionDelivered,true);
+   assert.equal(f.questions.length,2);
+   const second=f.questions.at(-1).actions[0].token;
+   assert.notEqual(first,second);
+   await assert.rejects(f.bridge.answer({...f.origin,token:first}),{code:'stale-interaction'});
+   assert.equal(f.bridge.interactions.pending.size,1);
+   const two=await f.bridge.answer({...f.origin,token:second});
+   assert.equal(two.completed,true);
+   assert.deepEqual((await waiting).answers.map(answer=>answer.selected),[['选甲'],['选乙']]);
+   assert.deepEqual(accepted,['question-a','question-a'],'each accepted step is marked before advancing');
+ }finally{await f.close();}
+});
+
+test('failed second-question publish releases native wait without a false delivery success',async()=>{
+ const f=fixture();let issued=0,firstToken;
+ const reg=f.bridge.adapters.get(JSON.stringify(['feishu','test']));
+ const original=reg.adapter.question;
+ reg.adapter.question=async(origin,body,actions)=>{
+   issued++;
+   if(issued===1){firstToken=actions[0].token;return {messageId:'first-card'};}
+   throw Object.assign(new Error('mock remote send failure'),{code:'remote-send-failed'});
+ };
+ try{
+   const waiting=f.bridge.interactions.request({agent:f.agent,questions:[
+     {id:'a',question:'第一题',options:[{label:'选甲'}]},
+     {id:'b',question:'第二题',options:[{label:'选乙'}]}
+   ]},()=>assert.fail());
+   await f.bridge.idle();
+   const reply=await f.bridge.answer({...f.origin,token:firstToken});
+   assert.equal(reply.nextQuestionDelivered,false);
+   await assert.rejects(waiting,{code:'ASK_USER_DELIVERY_FAILED'});
+   assert.equal(f.bridge.interactions.pending.size,0);
+   assert.equal(issued,2);
+ }finally{reg.adapter.question=original;await f.close();}
+});
+
+test('card delivered after native abort is retired rather than stranded',async()=>{
+ const f=fixture(),closed=[];
+ const reg=f.bridge.adapters.get(JSON.stringify(['feishu','test']));
+ let release;const gate=new Promise(resolve=>release=resolve);
+ reg.adapter.question=async()=>{await gate;return {messageId:'late-card'};};
+ reg.adapter.questionClosed=async(origin,id,reason)=>closed.push({id,reason});
+ try{
+   const abort=new AbortController();
+   const waiting=f.bridge.interactions.request({agent:f.agent,signal:abort.signal,questions:[
+     {id:'a',question:'是否继续',options:[{label:'继续'}]}
+   ]},()=>assert.fail());
+   await new Promise(resolve=>setImmediate(resolve));
+   abort.abort();
+   await assert.rejects(waiting,{code:'ASK_ABORTED'});
+   release();
+   await f.bridge.idle();
+   assert.deepEqual(closed,[{id:'late-card',reason:'ASK_USER_INVALIDATED'}]);
+ }finally{release?.();await f.close();}
+});
+
 test('native question timeout releases wait, revokes capabilities and retires the card',async()=>{
  const f=fixture(),closed=[];
  f.bridge.adapters.get(JSON.stringify(['feishu','test'])).adapter.questionClosed=async(origin,id,reason)=>closed.push(reason);

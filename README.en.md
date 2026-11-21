@@ -9,7 +9,7 @@ Connect **Discord and Feishu/Lark** to native DSH sessions with shared message r
 - **Connection recovery:** Each channel has independent settings and connectivity. Native SDK reconnects are preferred; persistent failures trigger bounded recovery and can refresh network proxy settings without restarting DSH.
 - **Sessions and permissions:** Verified owner DMs can share one native session across channels when configured. Groups and threads use durable bindings and separate admission checks.
 - **Reliable delivery:** Deduplicated inbound receipts, serialized session admission, durable outbound records and no blind resend of uncertain deliveries.
-- **Interaction:** Streaming progress, Ask User, model selection and channel commands including `/new`, `/status` and `/session`; Feishu supports CardKit updates.
+- **Interaction:** Streaming progress, Ask User, model selection and channel commands including `/new`, `/status` and `/session`. Feishu CardKit supports ordered updates, subdued final footers and transient-failure recovery.
 - **Outbound messaging:** `channel_send` sends text to authorized bindings of the current session, and Feishu images/files from its workspace. Trusted jobs may use the host API.
 - **Schedules and memory:** `/new` safely migrates active scheduled tasks; eligible sessions support log rotation. Durably bound groups/threads can share workspace memory through compatible memory plugins.
 
@@ -23,7 +23,7 @@ Replace `desktop` with the target profile and restart DSH after installation or 
 
 1. Configure Discord and/or Feishu credentials and allowed users/channels.
 2. Review owner verification; a first-DM claim is permitted only after channel admission.
-3. Optionally link verified owner DMs across channels, and configure progress, drafts and notifications.
+3. Optionally link verified owner DMs across channels, and configure progress, drafts and notifications. Both channel settings pages preserve unsaved edits across background refreshes.
 4. Test an actual message round trip on each enabled platform.
 
 ## Commands and outbound delivery
