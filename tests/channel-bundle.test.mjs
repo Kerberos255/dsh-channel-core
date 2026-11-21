@@ -115,7 +115,9 @@ test('Discord and Feishu align functional groups and keep infrequent settings in
     assert.equal(byKey.get('streaming.progress.draft').type,'boolean');
     assert.deepEqual(byKey.get('streaming.progress.draft').when,{'streaming.mode':'progress'});
     assert.equal(byKey.get('streaming.progress.maxLines').label,'最多显示进度条目');
-    assert.equal(byKey.get('throttleMs').label,'进度卡片刷新间隔（毫秒）');
+    assert.equal(byKey.get('throttleMs').label,'CardKit 刷新间隔（毫秒）');
+    assert.equal(byKey.get('throttleMs').min,300);
+    assert.match(byKey.get('throttleMs').help,/Patch.*1200 毫秒/);
     assert.equal(byKey.get('streaming.cardEngine').label,'飞书卡片引擎');
     assert.equal(byKey.get('streaming.progress.maxLineChars').label,'工具与简短说明字数上限');
     assert.equal(byKey.get('streaming.progress.draftMaxChars').label,'思考与草稿单条字数上限');

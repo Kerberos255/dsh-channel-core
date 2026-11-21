@@ -193,3 +193,21 @@ test('ordinary file send rejects unauthorized Discord targets, mixed attachments
   assert.equal(f.sent.length,0);
  }finally{await f.close();rmSync(root,{recursive:true,force:true});}
 });
+
+
+test('channel_send marks its own card, while scheduled and host outbound remain unchanged',async()=>{
+ const f=fixture();try{
+  f.bind();f.online();
+  const tool=await f.outbound.send({sessionId,text:'主动消息',idempotencyKey:'card-label-tool',source:'agent'});
+  const schedule=await f.outbound.send({sessionId,text:'定时通知',idempotencyKey:'card-label-schedule',source:'schedule'});
+  const host=await f.outbound.send({sessionId,text:'系统通知',idempotencyKey:'card-label-host',source:'host'});
+  assert.deepEqual([tool.state,schedule.state,host.state],['sent','sent','sent']);
+  assert.deepEqual(f.sent.map(item=>item.body.text),['主动消息','定时通知','系统通知']);
+  assert.equal(f.sent[0].body.channelSend,true);
+  assert.equal(f.sent[1].body.channelSend,undefined);
+  assert.equal(f.sent[2].body.channelSend,undefined);
+  assert.equal(JSON.parse(f.bridge.store.get(tool.id).body).channelSend,true,
+   'the marker survives the durable delivery ledger');
+  assert.equal(f.bridge.store.get(schedule.id).state,'sent');
+ }finally{await f.close();}
+});

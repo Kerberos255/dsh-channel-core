@@ -1,5 +1,5 @@
 /** CardKit API adapter: scoped to Feishu, no session policy. */
-const checked=(kind,res)=>{if(res?.code&&res.code!==0)throw Object.assign(new Error('feishu-cardkit-'+kind+'-'+res.code),{code:res.code});return res;};
+const checked=(kind,res)=>{if(res?.code&&res.code!==0)throw Object.assign(new Error('feishu-cardkit-'+kind+'-'+res.code),{code:res.code,msg:typeof res.msg==='string'?res.msg:undefined});return res;};
 /** The progress text has a stable element ID across structural updates. */
 export function streamingCard(payload){
  return {...payload,config:{...payload.config,streaming_mode:true,streaming_config:{print_frequency_ms:{default:70,pc:70,android:70,ios:70},print_step:{default:4,pc:4,android:4,ios:4},print_strategy:'fast'}},

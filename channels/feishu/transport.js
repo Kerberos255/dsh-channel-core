@@ -83,10 +83,11 @@ const safeAgent=value=>{
   const clean=String(value??'').replace(/[\r\n\x00-\x1f\x7f]/g,'').trim().slice(0,48);
   return clean||'Agent';
 };
-const title=body=>safeAgent(body.agentName)+' · '+(body.processSnapshot?'阶段记录':statusLabel(body.status))+(body.partCount>1?' · '+body.partIndex+'/'+body.partCount:'');
+// A model's channel_send confirms one outbound delivery, not the Turn's end.
+const title=body=>safeAgent(body.agentName)+' · '+(body.processSnapshot?'阶段记录':body.channelSend===true&&body.final&&body.status==='completed'?'已发送':statusLabel(body.status))+(body.partCount>1?' · '+body.partIndex+'/'+body.partCount:'');
 const wrapCard=(body,elements)=>({
   schema:'2.0',config:{wide_screen_mode:true,update_multi:true},
-  header:{title:{tag:'plain_text',content:title(body)},template:body.status==='failed'?'red':body.final&&!body.processSnapshot?'green':'blue'},
+  header:{title:{tag:'plain_text',content:title(body)},template:body.status==='failed'?'red':body.final&&!body.processSnapshot?(body.channelSend===true?'turquoise':'green'):'blue'},
   body:{elements},
 });
 
@@ -185,32 +186,30 @@ export function finalCards(body,options){
  * sequence; this cannot duplicate a message in the chat.
  */
 export async function finalizeCardKitMessage(kitApi,record,payload){
- // A full-card update is not proof that the streaming flag was disabled.
+ // A full-card update can confirm final text, but not the remote streaming flag.
  const completed={...payload,config:{...payload.config,streaming_mode:false}};
  let closeError;
  for(let attempt=0;attempt<2;attempt++){
   try{await kitApi.close(record);closeError=null;break;}
   catch(error){closeError=error;}
  }
- if(closeError){
-  // Best-effort final text, but preserve the uncertain remote close status.
-  try{await kitApi.update(record,completed);}catch{}
-  const failure=new Error('feishu-cardkit-stream-close-failed',{cause:closeError});
-  failure.code=closeError?.code??'feishu-cardkit-stream-close-failed';
-  throw failure;
- }
  for(let attempt=0;attempt<2;attempt++){
-  try{await kitApi.update(record,completed);return;}
-  catch(error){
+  try{
+   await kitApi.update(record,completed);
+   return {finalContentUpdated:true,streamClosed:!closeError,closeError};
+  }catch(error){
    if(attempt===1){
     const failure=new Error('feishu-cardkit-final-update-failed',{cause:error});
     failure.code=error?.code??'feishu-cardkit-final-update-failed';
+    failure.closeError=closeError;
     throw failure;
    }
   }
  }
 }
 export async function createTransport({config,credentials,signal,receive,state,diagnostic,action,host,menuStatus},sdkOverride){
+  // Legacy IM card.patch has a much lower safe update frequency than CardKit.
+  const patchThrottleMs=Math.max(1200,config.throttleMs);
   const sdk=sdkOverride??await import('@larksuiteoapi/node-sdk');
   const silent=Object.fromEntries(['error','warn','info','debug','trace'].map(name=>[name,()=>{}]));
   const http=sdk.defaultHttpInstance?{
@@ -225,7 +224,7 @@ export async function createTransport({config,credentials,signal,receive,state,d
     ...(http?{httpInstance:http}:{}),
     // The SDK must admit DMs for first-dm ownership; ChannelRuntime enforces user permissions.
     policy:{dmMode:'all',dmAllowlist:config.allowedUsers,groupAllowlist:groupAllowlistFor(config),requireMention:config.requireMention,respondToMentionAll:false},
-    safety:{chatQueue:{enabled:false},batch:{text:{delayMs:0,longDelayMs:0},media:{delayMs:0}},staleMessageWindowMs:300000},outbound:{streamThrottleMs:config.throttleMs,textChunkLimit:6000,retry:{maxAttempts:1}}});
+    safety:{chatQueue:{enabled:false},batch:{text:{delayMs:0,longDelayMs:0},media:{delayMs:0}},staleMessageWindowMs:300000},outbound:{streamThrottleMs:patchThrottleMs,textChunkLimit:6000,retry:{maxAttempts:1}}});
   installStatusMenu(channel,{onStatus:menuStatus,signal,state});
   const runtimeMetrics=new Map();
   async function presentation(body,force=false){
@@ -246,8 +245,34 @@ export async function createTransport({config,credentials,signal,receive,state,d
   const progress=new Map(),presented=new Map(),kitRecords=new Map(),questionCards=new Map(),questionCardsByMessage=new Map(),questionContexts=new Map(),disposers=[];
   // Do not silently evict an active stream or unanswered Ask User card.
   // Refuse excess new cards instead of leaking unbounded remote state.
-  const CARD_STATE_LIMIT=512;
+  const CARD_STATE_LIMIT=512, CARD_STATE_TTL_MS=24*60*60*1000, QUESTION_HISTORY_LIMIT=200;
+  // A 24-hour-inactive card without a queued operation is abandoned, even
+  // when its last known stream-close ACK was lost. Its card ID is never reused.
+  const cardTouched=new Map();
+  const stillReferenced=id=>[progress,presented,kitRecords,questionCards,questionContexts].some(map=>map.has(id));
+  const untouchIfEmpty=id=>{if(!stillReferenced(id))cardTouched.delete(id);};
+  const discardCardState=id=>{
+    progress.delete(id);presented.delete(id);kitRecords.delete(id);
+    questionCards.delete(id);questionContexts.delete(id);cardTouched.delete(id);
+    for(const [messageId,record] of questionCardsByMessage)
+      if(record.key===id)questionCardsByMessage.delete(messageId);
+  };
+  const pruneCardState=()=>{
+    const now=Date.now();
+    for(const [id,at] of cardTouched){
+      if(!stillReferenced(id)){cardTouched.delete(id);continue;}
+      // Native Ask User tokens have a shorter lifetime than this TTL; a card
+      // untouched for 24 hours with no active mutation is no longer live.
+      if(now-at<CARD_STATE_TTL_MS || cardOps.has(id))continue;
+      const abandonedStream=kitRecords.get(id);
+      if(abandonedStream?.streaming&&kitApi)
+        void kitApi.close(abandonedStream).catch(error=>
+          cardNotice('过期卡片流式关闭失败：'+(error?.code??'unknown'),'stale-card-close'));
+      discardCardState(id);
+    }
+  };
   const ensureCardCapacity=id=>{
+    pruneCardState();
     for(const current of [progress,presented,kitRecords,questionCards,questionContexts])
       if(!current.has(id)&&current.size>=CARD_STATE_LIMIT){
         const failure=new Error('feishu-card-state-capacity');
@@ -255,6 +280,18 @@ export async function createTransport({config,credentials,signal,receive,state,d
         failure.definitelyNotSent=true;
         throw failure;
       }
+  };
+  const trimQuestionHistory=()=>{
+    for(const [messageId,record] of questionCardsByMessage){
+      if(questionCardsByMessage.size<=QUESTION_HISTORY_LIMIT)break;
+      // Do not evict an answerable card just to meet the history target.
+      if(questionCards.get(record.key)===record&&!record.retireAttemptedAt)continue;
+      questionCardsByMessage.delete(messageId);
+      if(questionCards.get(record.key)===record)questionCards.delete(record.key);
+      if(!questionCards.has(record.key)&&!progress.has(record.key)&&!kitRecords.has(record.key))
+        questionContexts.delete(record.key);
+      untouchIfEmpty(record.key);
+    }
   };
   // Steer segmentation: generation guard plus the last payload a user actually saw.
   // One record per card segment owns its generation and its last visible payload,
@@ -290,7 +327,17 @@ export async function createTransport({config,credentials,signal,receive,state,d
     }
     return enqueue(task);
   };
-  const segmentOf=id=>segments.get(id)??{epoch:0,shown:null,at:0};
+  // An epoch must never repeat even after the segment map releases its key.
+  let nextSegmentEpoch=0;
+  const segmentOf=id=>{
+    let segment=segments.get(id);
+    if(!segment){
+      segment={epoch:++nextSegmentEpoch,shown:null,at:Date.now()};
+      segments.set(id,segment);
+      trimSegments();
+    }
+    return segment;
+  };
   const trimSegments=()=>{
     if(segments.size<=SEGMENT_LIMIT)return;
     const stale=[...segments.entries()].sort((a,b)=>a[1].at-b[1].at).slice(0,segments.size-SEGMENT_LIMIT);
@@ -299,16 +346,17 @@ export async function createTransport({config,credentials,signal,receive,state,d
   const rememberShown=(id,payload)=>{
     const segment=segmentOf(id);
     segments.set(id,{epoch:segment.epoch,shown:payload,at:Date.now()});
+    cardTouched.set(id,Date.now());
     trimSegments();
   };
   const bumpSegment=id=>{
     const segment=segmentOf(id);
-    const epoch=segment.epoch+1;
+    const epoch=++nextSegmentEpoch;
     segments.set(id,{epoch,shown:segment.shown,at:Date.now()});
     return epoch;
   };
   // A finished card no longer needs its snapshot: every view is released here.
-  const releaseSegment=id=>{progress.delete(id);presented.delete(id);segments.delete(id);};
+  const releaseSegment=id=>{progress.delete(id);presented.delete(id);segments.delete(id);untouchIfEmpty(id);};
   // A completed Ask User button belongs to one specific bot-owned card.
   // Recall it only after the bridge has authenticated and accepted the answer.
   // If Feishu disallows recall (permission/retention policy), remove buttons
@@ -343,7 +391,10 @@ export async function createTransport({config,credentials,signal,receive,state,d
       await channel.updateCard(record.messageId,finished);
       questionCardsByMessage.delete(messageId);
       if(questionCards.get(id)?.messageId===messageId)questionCards.delete(id);
+      if(!questionCards.has(id)&&!progress.has(id)&&!kitRecords.has(id))questionContexts.delete(id);
+      untouchIfEmpty(id);
     }catch(error){
+      record.retireAttemptedAt=Date.now();
       cardNotice('飞书问题卡更新失败：'+(error?.code??'api-error'),error?.code);
     }
   }
@@ -361,8 +412,28 @@ export async function createTransport({config,credentials,signal,receive,state,d
   };
 
   let kitApi=null; // resolve lazily: rawClient can appear after channel.connect()
-  let kitDisabled=false;
+  let kitDisabled=false, kitDisabledUntil=0;
   let kitRetryAfter=0; // transient failures retry after a short cooldown
+  const kitPermissionError=error=>{
+    const code=Number(error?.code??error?.response?.data?.code);
+    const status=Number(error?.status??error?.statusCode??error?.response?.status);
+    const detail=String(error?.msg??error?.response?.data?.msg??error?.message??'');
+    return status===403 || [99991672,99991676,99991679].includes(code) ||
+      /permission|scope|forbidden|unauthorized|access.denied|权限不足|缺少.{0,8}权限|无权限|未授权/iu.test(detail);
+  };
+  const canAttemptCardKit=()=>{
+    // Authorization may change without a DSH restart. The circuit is bounded.
+    if(kitDisabled&&kitDisabledUntil&&Date.now()>=kitDisabledUntil){
+      kitDisabled=false;kitDisabledUntil=0;
+    }
+    return !kitDisabled&&Date.now()>=kitRetryAfter;
+  };
+  const noteKitError=error=>{
+    if(kitPermissionError(error)){
+      kitDisabled=true;kitDisabledUntil=Date.now()+15*60*1000;
+      cardNotice('CardKit 缺少权限，暂时使用兼容卡片；授权恢复后自动重试','card-permission');
+    }else kitRetryAfter=Date.now()+120000;
+  };
   const key=origin=>JSON.stringify([origin.conversationId,origin.threadId??'',origin.messageId]);
   const sendOptions=origin=>({replyTo:origin.messageId,replyInThread:!!origin.threadId});
   disposers.push(channel.on('message',async message=>{
@@ -410,10 +481,6 @@ export async function createTransport({config,credentials,signal,receive,state,d
   disposers.push(channel.on('error',error=>state('渠道错误：'+error.code)));
   disposers.push(channel.on('reconnecting',()=>state('渠道正在重连…',false)));
   disposers.push(channel.on('reconnected',()=>state('渠道已重新连接',true)));
-  function presentPayload(origin,payload,options={}){
-    const id=key(origin),epoch=segmentOf(id).epoch;
-    return runCard(id,()=>presentPayloadNow(origin,payload,options,epoch),{coalesce:options.streaming===true,terminal:options.final===true});
-  }
   async function presentPayloadNow(origin,payload,{recreateMissing=true,streaming=false,final=false}={},epoch=segmentOf(key(origin)).epoch){
     checkAbort(signal);
     if(!withinBudget(payload))throw Object.assign(new Error('feishu-card-payload-too-large'),{definitelyNotSent:true});
@@ -421,7 +488,7 @@ export async function createTransport({config,credentials,signal,receive,state,d
     const stale=()=>segmentOf(id).epoch!==epoch;
     if(stale())return {messageId:null};
     ensureCardCapacity(id);
-    if(streaming&&!kitApi&&config.streaming.cardEngine==='cardkit'&&!kitDisabled&&Date.now()>=kitRetryAfter){
+    if(streaming&&!kitApi&&config.streaming.cardEngine==='cardkit'&&canAttemptCardKit()){
       kitApi=createCardKitChannel(channel);
       if(!kitApi){kitDisabled=true;cardNotice('CardKit SDK 接口不可用，已自动使用兼容卡片','sdk-unavailable');}
     }
@@ -431,7 +498,9 @@ export async function createTransport({config,credentials,signal,receive,state,d
     if(record){
       // CardKit-linked IM messages must be edited through CardKit, not
       // through the legacy IM patch API. One serial sequence owns all updates.
+      try{
       if(streaming&&record.streaming){
+        if(kitDisabled&&kitDisabledUntil>Date.now())return {messageId:record.messageId};
         if(stale())return {messageId:record.messageId};
         const next=streamingCard(payload);
         const structure=JSON.stringify({header:next.header,extra:next.body.elements.slice(1)});
@@ -440,7 +509,12 @@ export async function createTransport({config,credentials,signal,receive,state,d
         if(stale())return {messageId:record.messageId};
       }else{
         if(stale())return {messageId:record.messageId};
-        await finalizeCardKitMessage(kitApi,record,payload);
+        const outcome=await finalizeCardKitMessage(kitApi,record,payload);
+        if(!outcome.streamClosed){
+          noteKitError(outcome.closeError);
+          cardNotice('CardKit 最终正文已更新，但流式关闭未确认，请检查客户端动画',
+            'stream-close-unconfirmed');
+        }
         if(stale())return {messageId:record.messageId};
         kitRecords.delete(id);
       }
@@ -448,10 +522,17 @@ export async function createTransport({config,credentials,signal,receive,state,d
       presented.set(id,signature);
       if(final)releaseSegment(id);
       return {messageId:record.messageId};
+      }catch(error){noteKitError(error);throw error;}
     }
     if(existing){
       try{
         if(stale())return {messageId:existing};
+        // Patch progress is a best-effort snapshot, never a terminal delivery.
+        // Skip too-early intermediate edits instead of delaying a queued final.
+        // This also protects an in-flight CardKit->Patch fallback: the bridge
+        // may still have a 300ms timer outstanding from before the downgrade.
+        if(streaming&&!final&&Date.now()-(cardTouched.get(id)??0)<patchThrottleMs)
+          return {messageId:existing};
         await channel.updateCard(existing,payload);
         if(stale())return {messageId:existing};
         rememberShown(id,payload);
@@ -466,7 +547,7 @@ export async function createTransport({config,credentials,signal,receive,state,d
         if(!recreateMissing)return {messageId:null};
       }
     }
-    if(streaming&&kitApi&&!kitDisabled&&Date.now()>=kitRetryAfter){
+    if(streaming&&kitApi&&canAttemptCardKit()){
       try{
         if(stale())return {messageId:null};
         const created=await kitApi.create(origin,payload);
@@ -488,10 +569,7 @@ export async function createTransport({config,credentials,signal,receive,state,d
         // Fallback is safe only when card.create failed BEFORE any IM send.
         if(!error.cardKitFallbackSafe)throw error;
         // Safe fallback: no IM message was attempted. Transient failures cool down.
-        const status=Number(error?.status??error?.statusCode??error?.response?.status);
-        const permission=status===403&&/permission|scope|forbidden/i.test(String(error?.msg??error?.message??''));
-        if(permission)kitDisabled=true;
-        else kitRetryAfter=Date.now()+120000;
+        noteKitError(error);
         cardNotice('CardKit 创建失败，已回退兼容卡片：'+(error.code??'api-unavailable'),error?.code);
       }
     }
@@ -547,9 +625,14 @@ export async function createTransport({config,credentials,signal,receive,state,d
     }
     let closed=false;
     try{await kitApi.close(record);closed=true;}
-    catch(error){cardNotice('原卡片停止流式失败：'+(error?.code??'unknown'),error?.code);}
-    if(frozen)await kitApi.update(record,frozen).catch(error=>cardNotice('原卡片封版失败：'+(error?.code??'unknown'),error?.code));
-    if(closed&&!record.streaming)kitRecords.delete(id);
+    catch(error){noteKitError(error);cardNotice('原卡片停止流式失败：'+(error?.code??'unknown'),error?.code);}
+    if(frozen)await kitApi.update(record,frozen).catch(error=>{
+      noteKitError(error);
+      cardNotice('原卡片封版失败：'+(error?.code??'unknown'),error?.code);
+    });
+    // The old segment was abandoned: never let its state occupy a live slot.
+    kitRecords.delete(id);
+    untouchIfEmpty(id);
     if(segmentOf(id).epoch===epoch)segments.delete(id);
     report('ok',!frozen?'empty':closed?'frozen':'frozen-unclosed');
     return {frozen:!!frozen,closed};
@@ -571,17 +654,23 @@ export async function createTransport({config,credentials,signal,receive,state,d
     progress.clear();presented.clear();kitRecords.clear();questionCards.clear();questionCardsByMessage.clear();questionContexts.clear();cardOps.clear();})();
   const onAbort=()=>{void close().catch(()=>{});};signal.addEventListener('abort',onAbort,{once:true});
   return {
-    throttleMs:config.throttleMs,
+    // Bridge reads this on each new timer, so CardKit failure immediately
+    // raises Patch's cadence without slowing healthy CardKit streams.
+    get throttleMs(){return config.streaming.cardEngine==='cardkit'&&canAttemptCardKit()
+      ?config.throttleMs:patchThrottleMs;},
     coalesceProgress:true,
     showNarration:config.streaming.mode==='progress'&&config.streaming.progress.narration,
     showPublicDrafts:config.streaming.mode==='progress'&&config.streaming.progress.draft,
     start:()=>channel.connect(),
     health:connectionHealth,
-    details:()=>({feishuCardEngine:kitRecords.size?'CardKit':kitDisabled?'兼容模式（CardKit 不可用）':Date.now()<kitRetryAfter?'兼容模式（CardKit 冷却中）':config.streaming.cardEngine==='patch'?'兼容模式':'CardKit 待首次流式创建'}),
+    details:()=>({feishuCardEngine:kitRecords.size?'CardKit':kitDisabled?'兼容模式（CardKit 权限或接口限制）':Date.now()<kitRetryAfter?'兼容模式（CardKit 冷却中）':config.streaming.cardEngine==='patch'?'兼容模式':'CardKit 待首次流式创建'}),
     cutProgress,
     close,
     progress:config.streaming.mode!=='off'?(origin,body)=>present(origin,body,[],config.streaming):undefined,
     async send(origin,body){return runCard(key(origin),async()=>{
+      const id=key(origin);
+      let preserveRetryState=false;
+      try{
       if(body.filePath){
         const {filePath,fileName}=verifyQueuedFile(body);
         return channel.send(origin.conversationId,{file:{source:filePath,fileName}},sendOptions(origin));
@@ -623,22 +712,37 @@ export async function createTransport({config,credentials,signal,receive,state,d
         try{await presentPayloadNow(origin,draftCard(finished),{recreateMissing:false});}
         catch(error){cardNotice('飞书最终答复已发送，但折叠思考卡更新失败：'+(error?.code??'unknown'),error?.code);}
       }
-      progress.delete(key(origin));presented.delete(key(origin));kitRecords.delete(key(origin));
-      const pendingQuestion=questionCards.get(key(origin));
+      const pendingQuestion=questionCards.get(id);
       if(pendingQuestion)await retireQuestionCard(pendingQuestion.messageId,origin.conversationId,undefined,
         pendingQuestion.accepted?undefined:'ASK_USER_INVALIDATED');
-      questionContexts.delete(key(origin));
       return result;
+      }catch(error){
+        // A confirmed no-send failure may safely retry against the same state.
+        preserveRetryState=error?.definitelyNotSent===true;
+        throw error;
+      }finally{
+        if(!preserveRetryState){
+          progress.delete(id);presented.delete(id);kitRecords.delete(id);
+          questionContexts.delete(id);segments.delete(id);
+          untouchIfEmpty(id);
+        }
+      }
     },{terminal:true});},
     questionAccepted(origin,messageId){
       const record=questionCardsByMessage.get(messageId);
       if(record?.conversationId===origin.conversationId)record.accepted=true;
     },
     async questionClosed(origin,messageId,reason){
+      const id=key(origin);
       await retireQuestionCard(messageId,origin.conversationId,undefined,reason);
+      if(!questionCards.has(id)&&!progress.has(id)&&!kitRecords.has(id)){
+        questionContexts.delete(id);
+        untouchIfEmpty(id);
+      }
     },
     async question(origin,body,actions){return runCard(key(origin),async()=>{
       const id=key(origin),context=String(body.context??''),previous=questionContexts.get(id)??'';
+      const hadContext=questionContexts.has(id),oldTouched=cardTouched.get(id);
       ensureCardCapacity(id);
       const added=context.startsWith(previous)?context.slice(previous.length).trimStart():context;
       const hasProgress=progress.has(id);
@@ -659,7 +763,7 @@ export async function createTransport({config,credentials,signal,receive,state,d
           }
         }else{
           const record=kitRecords.get(id);
-          if(record)await kitApi.close(record);
+          if(record)try{await kitApi.close(record);}catch(error){noteKitError(error);throw error;}
         }
         progress.delete(id);presented.delete(id);kitRecords.delete(id);
       }else if(added){
@@ -672,6 +776,8 @@ export async function createTransport({config,credentials,signal,receive,state,d
         }
       }
       questionContexts.set(id,context);
+      cardTouched.set(id,Date.now());
+      try{
       const payload=card(await presentation(body),actions);
       if(!withinBudget(payload))throw new Error('feishu-card-payload-too-large');
       const signature=JSON.stringify(payload),prior=questionCards.get(id);
@@ -683,12 +789,22 @@ export async function createTransport({config,credentials,signal,receive,state,d
         const record={key:id,conversationId:origin.conversationId,messageId:sent.messageId,signature};
         questionCards.set(id,record);
         questionCardsByMessage.set(sent.messageId,record);
+        cardTouched.set(id,Date.now());
         // The new question stays usable even when retiring the old card fails.
         if(prior&&prior.messageId!==sent.messageId)
           void retireQuestionCard(prior.messageId,origin.conversationId,undefined,'ASK_USER_ADVANCED');
-        while(questionCardsByMessage.size>200)questionCardsByMessage.delete(questionCardsByMessage.keys().next().value);
+        trimQuestionHistory();
       }
       return sent;
+      }catch(error){
+        // An unsent next question must not claim context advancement or
+        // permanently consume a question-state slot.
+        if(hadContext)questionContexts.set(id,previous);
+        else questionContexts.delete(id);
+        if(oldTouched===undefined)untouchIfEmpty(id);
+        else cardTouched.set(id,oldTouched);
+        throw error;
+      }
     },{terminal:true});},
     async upload(message,sessionId,fileUploads,uploadSignal){
       if(!config.attachments)throw Object.assign(new Error('attachments-disabled'),{code:'attachments-disabled'});

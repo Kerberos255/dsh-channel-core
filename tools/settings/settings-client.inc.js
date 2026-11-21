@@ -79,9 +79,10 @@ function FileConfigPage({ scope, title, description, fields, actionLabel, creden
   const [editor, setEditor] = React.useState({ base: null, draft: null, error: '', saved: false });
   const [busy, setBusy] = React.useState(false);
   const busyRef = React.useRef(false), alive = React.useRef(false);
-  const dirty = !!editor.base && (JSON.stringify(editor.draft) !== JSON.stringify(editor.base.value)
-    || Object.entries(editor.listText??{}).some(([key,value])=>value!==(configValue(editor.base.value,key)??[]).join('\n'))
-    || Object.entries(editor.numberText??{}).some(([key,value])=>value!==String(configValue(editor.base.value,key)??'')));
+  // Raw buffers are retained by the polling guard, but whitespace-only list
+  // edits and equivalent numeric text are not substantive configuration changes.
+  const invalidNumber=Object.values(editor.numberText??{}).some(text=>text.trim()===''||!Number.isFinite(Number(text)));
+  const dirty=!!editor.base&&(JSON.stringify(editor.draft)!==JSON.stringify(editor.base.value)||invalidNumber);
   const external = !!editor.base && snapshot.revision !== editor.base.revision;
   React.useEffect(() => {
     if (snapshot.status !== 'ready') return;
@@ -210,13 +211,14 @@ function FileConfigPage({ scope, title, description, fields, actionLabel, creden
     void work(async () => { const result = await scope.update(editor.draft, editor.base.revision); replace(result); if (alive.current) setEditor(previous => ({ ...previous, saved: true })); });
   } },credentialsFirst?credentialView:null,editor.draft?grouped(false):e('p',null,'正在读取配置…'),
     editor.draft&&fields.some(spec=>spec.advanced&&visible(spec))?e('details',{className:'dpc-advanced'},e('summary',null,'高级设置'),grouped(true)):null,
-    snapshot.error ? e('p', { role: 'alert' }, '文件有误，运行时保留上一次有效设置。', snapshot.error.message, '；保存可修复文件。') : null,
-    external ? e('p', { role: 'alert' }, '配置已被其他页面或文件编辑修改。重新载入后再保存，可避免覆盖外部修改。') : null,
-    editor.error || snapshot.requestError ? e('p', { role: 'alert' }, editor.error || snapshot.requestError) : null,
-    e('div', { className: 'dpc-actions dpc-save-actions' }, e(DshButton, { type: 'submit', variant: 'primary', disabled: disabled || external || (!dirty && !snapshot.error) }, busy ? '处理中…' : '保存'),
+    e('div',{className:'dpc-save-bar'},
+      snapshot.error ? e('p', { role: 'alert' }, '文件有误，运行时保留上一次有效设置。', snapshot.error.message, '；保存可修复文件。') : null,
+      external ? e('p', { role: 'alert' }, '配置已被其他页面或文件编辑修改。重新载入后再保存，可避免覆盖外部修改。') : null,
+      editor.error || snapshot.requestError ? e('p', { role: 'alert' }, editor.error || snapshot.requestError) : null,
+      e('div', { className: 'dpc-actions dpc-save-actions' }, e(DshButton, { type: 'submit', variant: 'primary', disabled: disabled || external || (!dirty && !snapshot.error) }, busy ? '处理中…' : '保存'),
       reloadNeeded ? e(DshButton, { type: 'button', variant: 'outline', disabled: busy, onClick: () => void work(async () => replace(await scope.reload())) }, dirty ? '放弃草稿并重新载入' : '重新载入') : null,
       actionLabel ? e(DshButton, { type: 'button', variant: 'outline', disabled: busy || !snapshot.writable, onClick: () => void work(async () => { await scope.runAction(); }) }, actionLabel) : null,
-      e('span', { role: 'status' }, editor.saved ? '已保存并生效' : dirty ? '尚未保存' : '')),
+      e('span', { role: 'status' }, editor.saved ? '已保存并生效' : dirty ? '尚未保存' : ''))),
     snapshot.details ? e('p', { role: 'status' }, snapshot.details.message) : null,
     e('p', { className: 'dpc-note' }, '保存后自动应用，后续操作使用新配置。'),
     snapshot.configFile ? e('details', { className: 'dpc-path' }, e('summary', null, '配置文件'), e('code', null, snapshot.configFile)) : null,
@@ -281,7 +283,8 @@ function installConfigPage(ctx, options) {
       .dpc-status{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary);word-break:break-word;line-height:1.6}
       .dpc-field input:not([type=checkbox]),.dpc-field select,.dpc-field textarea{box-sizing:border-box;width:100%;padding:9px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:inherit;font:inherit}.dpc-field textarea{resize:vertical;line-height:1.6}
       .dpc-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:24px}
-      .dpc-page>.dpc-save-actions{position:sticky;bottom:0;z-index:5;padding:12px 8px;border-top:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1,var(--dsw-alias-bg-layer-2));border-radius:0 0 10px 10px}
+      .dpc-page>.dpc-save-bar{position:sticky;bottom:0;z-index:5;padding:12px 8px;border-top:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1,var(--dsw-alias-bg-layer-2));border-radius:0 0 10px 10px}
+      .dpc-save-bar>.dpc-actions{margin-top:0}.dpc-save-bar>[role=alert]{margin:0 0 10px;padding:9px 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);overflow-wrap:anywhere;font-size:13px;line-height:1.5}
       .dpc-order{margin:0;padding:0;list-style:none;display:grid;gap:4px}.dpc-order li{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;background:var(--dsw-alias-bg-layer-2)}
       .dpc-rank{font-size:12px;color:var(--dsw-alias-label-tertiary);width:20px;text-align:center;font-variant-numeric:tabular-nums}.dpc-provider-name{flex:1}.dpc-order-actions{display:flex;gap:2px}.dpc-arrow{min-width:28px;padding:0!important}
       .dpc-providers,.dpc-order{grid-template-columns:1fr;gap:12px}.dpc-choice{display:inline-flex;gap:4px;margin:4px 12px 4px 0}

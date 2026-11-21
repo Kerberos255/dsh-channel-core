@@ -4,22 +4,23 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { schema } from '../config.js';
-import { card, createTransport } from '../transport.js';
+import { card, finalCards, createTransport } from '../transport.js';
 import { ConfigFile } from '../../../lib/channel-plugin-settings/file-config.js';
 
 const origin={provider:'feishu',accountId:'default',conversationId:'chat-test',userId:'user-test',messageId:'message-test'};
 
 function fixture(streaming={mode:'progress'},behavior={}){
  const calls=[],listeners=new Map();
+ let sdkOptions;
  const channel={
   on(name,fn){listeners.set(name,fn);return()=>listeners.delete(name);},
   async send(chatId,body,options){calls.push({type:'send',chatId,body,options});return {messageId:'card-'+calls.filter(c=>c.type==='send').length};},
   async updateCard(id,payload){calls.push({type:'update',id,payload});if(behavior.updateGate)await behavior.updateGate();if(behavior.failUpdate){const error=new Error('mock-patch');error.status=behavior.failUpdate;throw error;}},
   async connect(){},async disconnect(){},rawClient:behavior.rawClient
  };
- const sdk={createLarkChannel:()=>channel,Domain:{Lark:'lark',Feishu:'feishu'}};
+ const sdk={createLarkChannel:options=>{sdkOptions=options;return channel;},Domain:{Lark:'lark',Feishu:'feishu'}};
  const create=()=>createTransport({config:schema.validate({streaming,...(behavior.config??{})}),credentials:['fixture'],signal:new AbortController().signal,receive:async()=>{},state:behavior.state??(()=>{}),action:behavior.action??(async()=>{}),host:behavior.host},sdk);
- return {calls,listeners,create,behavior};
+ return {calls,listeners,create,behavior,getSDKOptions:()=>sdkOptions};
 }
 const activity={tools:[{name:'read_file',status:'running',detail:'DESIGN.md'},{name:'pwsh',status:'completed',detail:'npm pack'}],commentary:'检查脚本',narration:'内部推理\n最后思考'};
 
@@ -61,11 +62,13 @@ test('progress card renders tool icons without leaking uncommitted draft',()=>{
 });
 
 test('progress edits one card and skips identical payload; final replaces progress',async()=>{
- const f=fixture(),t=await f.create();try{
+ const f=fixture(),t=await f.create();
+ const now=Date.now;let clock=now();try{Date.now=()=>clock;
   const body={status:'tool-running',text:'DRAFT',final:false,activity};
   await t.progress(origin,body);await t.progress(origin,body);
   assert.equal(f.calls.filter(x=>x.type==='send').length,1);
   assert.equal(f.calls.filter(x=>x.type==='update').length,0);
+  clock+=1200;
   await t.progress(origin,{...body,activity:{...activity,tools:[{name:'read',status:'completed',detail:'notes.md'}]}});
   assert.equal(f.calls.filter(x=>x.type==='update').length,1);
   await t.question(origin,{status:'waiting-user',text:'请确认'},[{label:'允许',token:'fixture-token'}]);
@@ -78,7 +81,7 @@ test('progress edits one card and skips identical payload; final replaces progre
   assert.equal(f.calls.at(-1).type,'update','fallback retires the answered question card');
   await t.progress({...origin,messageId:'next'},{status:'thinking',text:'PRIVATE-DRAFT'});
   assert.equal(f.calls.filter(x=>x.type==='send').length,4);
- }finally{await t.close();}
+ }finally{Date.now=now;await t.close();}
 });
 
 test('partial mode emits public body, off removes progress but preserves final',async()=>{
@@ -94,16 +97,22 @@ test('partial mode emits public body, off removes progress but preserves final',
 });
 
 test('confirmed missing card falls back; unknown update failure never re-sends',async()=>{
+ const now=Date.now;let clock=now();
  const gone=fixture({mode:'progress'},{failUpdate:404}),t=await gone.create();try{
+  Date.now=()=>clock;
   await t.progress(origin,{status:'thinking'});
+  clock+=1200;
   await t.progress(origin,{status:'generating'});
   assert.equal(gone.calls.filter(x=>x.type==='send').length,2);
- }finally{await t.close();}
+ }finally{Date.now=now;await t.close();}
+ clock=now();
  const unknown=fixture({mode:'progress'},{failUpdate:500}),q=await unknown.create();try{
+  Date.now=()=>clock;
   await q.progress(origin,{status:'thinking'});
+  clock+=1200;
   await assert.rejects(q.progress(origin,{status:'generating'}));
   assert.equal(unknown.calls.filter(x=>x.type==='send').length,1);
- }finally{await q.close();}
+ }finally{Date.now=now;await q.close();}
 });
 
 test('long reply without drafts reuses progress for first card, then sends remaining answer cards',async()=>{
@@ -455,14 +464,19 @@ test('CardKit streaming text error never blindly resends a duplicate IM card',as
 
 test('manual Feishu compatibility mode bypasses CardKit even with SDK support',async()=>{
  const kit=fakeCardKit(),f=fixture({mode:'progress',cardEngine:'patch'},{rawClient:kit.rawClient}),t=await f.create();
+ const now=Date.now;let clock=now();
  try{
+  Date.now=()=>clock;
   await t.progress(origin,{status:'thinking'});
+  await t.progress(origin,{status:'tool-running'});
+  assert.equal(f.calls.filter(x=>x.type==='update').length,0,'too-early Patch edits are coalesced without API writes');
+  clock+=1200;
   await t.progress(origin,{status:'tool-running'});
   assert.equal(kit.calls.length,0);
   assert.equal(f.calls.filter(x=>x.type==='send').length,1);
   assert.equal(f.calls.filter(x=>x.type==='update').length,1);
   assert.equal(t.details().feishuCardEngine,'兼容模式');
- }finally{await t.close()}
+ }finally{Date.now=now;await t.close()}
 });
 
 test('CardKit absence auto-degrades without breaking final reply or Ask User',async()=>{
@@ -970,4 +984,104 @@ test('Feishu group retains only committed public drafts as a collapsed card, nev
   assert(!JSON.stringify(f.calls).includes('PRIVATE-REASONING'));
   assert.equal(sent.at(-1).body.card.body.elements[0].content,'最终正文');
  }finally{await t.close()}
+});
+
+
+test('Feishu channel_send uses turquoise 已发送, distinct from native green 已完成',async()=>{
+ const f=fixture({mode:'progress',cardEngine:'patch'}),t=await f.create();
+ try{
+  const toolText='一条主动发送的消息';
+  await t.send(origin,{sessionId:'session',status:'completed',final:true,proactive:true,channelSend:true,text:toolText});
+  const toolCard=f.calls.filter(call=>call.type==='send').at(-1).body.card;
+  assert.equal(toolCard.header.title.content,'Agent · 已发送');
+  assert.equal(toolCard.header.template,'turquoise');
+  assert.equal(toolCard.body.elements[0].content,toolText);
+  await t.send({...origin,messageId:'normal-final'},{sessionId:'session',status:'completed',final:true,text:'正式最终回复'});
+  const finalCard=f.calls.filter(call=>call.type==='send').at(-1).body.card;
+  assert.equal(finalCard.header.title.content,'Agent · 已完成');
+  assert.equal(finalCard.header.template,'green');
+  await t.send({...origin,messageId:'scheduled-notification'},{sessionId:'session',status:'completed',final:true,proactive:true,text:'日程通知'});
+  const scheduleCard=f.calls.filter(call=>call.type==='send').at(-1).body.card;
+  assert.equal(scheduleCard.header.title.content,'Agent · 已完成');
+  assert.equal(scheduleCard.header.template,'green');
+  assert.equal(card({agentName:'Agent',channelSend:true,final:false,status:'thinking',text:'进行中'}).header.title.content,'Agent · 正在思考');
+  assert.equal(card({agentName:'Agent',channelSend:true,final:true,status:'failed',text:'发送失败'}).header.template,'red');
+  assert.notEqual(card({agentName:'Agent',channelSend:true,final:true,status:'failed',text:'发送失败'}).header.title.content,'Agent · 已发送');
+ }finally{await t.close();}
+});
+
+test('long channel_send final cards preserve the sent label, color and every text character',()=>{
+ const streaming=schema.validate({streaming:{mode:'progress',cardEngine:'patch'}}).streaming;
+ const body={agentName:'Agent',status:'completed',final:true,channelSend:true,text:'正文'.repeat(5200)};
+ const cards=finalCards(body,streaming);
+ assert(cards.length>1,'test must cover split cards');
+ assert(cards.every(value=>value.header.template==='turquoise'&&value.header.title.content.startsWith('Agent · 已发送')));
+ assert.equal(cards.map(value=>value.body.elements[0].content).join(''),body.text);
+ const ordinary=finalCards({...body,channelSend:false},streaming);
+ assert(ordinary.every(value=>value.header.template==='green'&&value.header.title.content.startsWith('Agent · 已完成')));
+});
+
+
+test('CardKit uses 300ms progress throttle while SDK Patch safety limit stays 1200ms',async()=>{
+ const kit=fakeCardKit();
+ const f=fixture({mode:'progress',cardEngine:'cardkit'},{rawClient:kit.rawClient,config:{throttleMs:300}});
+ const t=await f.create();
+ try{
+  assert.equal(schema.validate({throttleMs:300}).throttleMs,300);
+  assert.throws(()=>schema.validate({throttleMs:299}),/throttleMs/);
+  assert.equal(t.throttleMs,300,'CardKit bridge timer must use the requested 300ms');
+  assert.equal(f.getSDKOptions().outbound.streamThrottleMs,1200,'underlying legacy Patch path stays at least 1200ms');
+  await t.progress(origin,{status:'thinking'});
+  await t.progress(origin,{status:'tool-running'});
+  assert.equal(kit.calls.filter(x=>x.type==='kit-create').length,1);
+  assert.equal(kit.calls.filter(x=>x.type==='kit-update').length,1,
+   'CardKit remains free to update without the 1200ms Patch guard');
+  assert.equal(f.calls.filter(x=>x.type==='update').length,0);
+ }finally{await t.close()}
+});
+
+test('Patch hard rate floor skips burst edits but never delays the final answer',async()=>{
+ const f=fixture({mode:'progress',cardEngine:'patch'},{config:{throttleMs:300}}),t=await f.create();
+ const now=Date.now;let clock=now();
+ try{
+  Date.now=()=>clock;
+  assert.equal(t.throttleMs,1200,'manual Patch must use the independent slow bridge throttle');
+  assert.equal(f.getSDKOptions().outbound.streamThrottleMs,1200,'legacy outbound SDK must stay slow');
+  await t.progress(origin,{status:'thinking'});
+  clock+=300;
+  await t.progress(origin,{status:'tool-running'});
+  clock+=899;
+  await t.progress(origin,{status:'thinking',text:'newer intermediate snapshot'});
+  assert.equal(f.calls.filter(x=>x.type==='update').length,0,'1199ms is still too early');
+  clock+=1;
+  await t.progress(origin,{status:'tool-running',text:'fresh'});
+  assert.equal(f.calls.filter(x=>x.type==='update').length,1,'1200ms allows one Patch edit');
+  clock+=100;
+  const final=await t.send(origin,{status:'completed',final:true,text:'final is never suppressed'});
+  assert(final.messageId,'terminal delivery must not wait for Patch throttle');
+  assert.equal(f.calls.filter(x=>x.type==='update').length,2,'final edit bypasses progress throttling');
+  assert.equal(f.calls.at(-1).payload.body.elements[0].content,'final is never suppressed');
+ }finally{Date.now=now;await t.close()}
+});
+
+test('CardKit create failure switches from 300ms to protected Patch without duplicate sends',async()=>{
+ const kit=fakeCardKit({create:Object.assign(new Error('permission denied'),{code:403})});
+ const f=fixture({mode:'progress',cardEngine:'cardkit'},{rawClient:kit.rawClient,config:{throttleMs:300}});
+ const t=await f.create();
+ const now=Date.now;let clock=now();
+ try{
+  Date.now=()=>clock;
+  assert.equal(t.throttleMs,300);
+  await t.progress(origin,{status:'thinking'});
+  assert.equal(t.throttleMs,1200,'permission fallback raises the throttle immediately');
+  assert.equal(f.calls.filter(x=>x.type==='send').length,1);
+  await t.progress(origin,{status:'tool-running'});
+  assert.equal(f.calls.filter(x=>x.type==='update').length,0,'pending 300ms timer cannot rush Patch updates');
+  clock+=1200;
+  await t.progress(origin,{status:'tool-running'});
+  assert.equal(f.calls.filter(x=>x.type==='update').length,1);
+  const final=await t.send(origin,{status:'completed',final:true,text:'safely completed'});
+  assert(final.messageId);
+  assert.equal(f.calls.filter(x=>x.type==='send').length,1,'no duplicate fallback messages');
+ }finally{Date.now=now;await t.close()}
 });

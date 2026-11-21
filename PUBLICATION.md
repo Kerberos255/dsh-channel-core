@@ -12,7 +12,7 @@ Upstream third-party dependencies retain their own licenses.
 
 `npm test` runs the portable suite without installing DSH peers or contacting bot services. `npm run test:host` runs all suites in an environment that supplies the compatible DSH SDK and declared development dependencies. The network suite uses the project's `ws` dependency, OS temporary directories, and the included public test-only TLS fixtures; it never loads a personal DSH profile.
 
-Merged channel settings can be rebuilt with node tools/build-client.mjs.
+Merged channel settings can be rebuilt with node tools/build-client.mjs. For Feishu, the CardKit progress interval can be configured down to 300 ms, while fallback Patch progress updates are independently limited to at least 1200 ms. These are progress-update cadences, not guarantees of API delivery or faster model output.
 
 Local-first performance optimization synchronized on 2026-10-08 from DSH plugin source 0.4.4. Changes: fewer repeated SQLite prepares; fresh Channel Core identity bindings are still checked on every recall. Regression tests were run against the local DSH SDK before this public-source sync.
 

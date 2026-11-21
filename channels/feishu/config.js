@@ -67,6 +67,7 @@ const base=defineConfig({
   autoCollectGroups:false, allowedGroups:[], requireMention:true,
   inputMode:'inherit', agentPreset:'agent', rolePreset:'', workspacePath:'',
   memoryNamespace:'private', identityLinks:[], ownerMode:'first-dm', ownerUserId:'',
+  // throttleMs controls CardKit. Legacy IM Patch is independently bounded to 1200ms.
   streaming:streaming({mode:'progress'}), throttleMs:750, attachments:true,maxAttachmentMB:10,
 },{
   accountId:id,appId,appSecretRef:ref,
@@ -84,7 +85,7 @@ const base=defineConfig({
   identityLinks:value=>Array.isArray(value)&&value.length<=1000
     &&value.every(line=>typeof line==='string'&&line.includes('=')
       &&line.split('=').length===2&&line.split('=').every(id)),
-  throttleMs:value=>Number.isSafeInteger(value)&&value>=400&&value<=5000,
+  throttleMs:value=>Number.isSafeInteger(value)&&value>=300&&value<=5000,
   maxAttachmentMB:value=>Number.isSafeInteger(value)&&value>=1&&value<=20,
 });
 

@@ -9,8 +9,8 @@ Connect **Discord and Feishu/Lark** to native DSH sessions with shared message r
 - **Connection recovery:** Each channel has independent settings and connectivity. Native SDK reconnects are preferred; persistent failures trigger bounded recovery and can refresh network proxy settings without restarting DSH.
 - **Sessions and permissions:** Verified owner DMs can share one native session across channels when configured. Groups and threads use durable bindings and separate admission checks.
 - **Reliable delivery:** Deduplicated inbound receipts, serialized session admission, durable outbound records and no blind resend of uncertain deliveries.
-- **Interaction:** Streaming progress, Ask User, model selection and channel commands including `/new`, `/status` and `/session`. Feishu CardKit supports ordered updates, subdued final footers and transient-failure recovery.
-- **Outbound messaging:** `channel_send` sends text to authorized bindings of the current session, and Feishu images/files from its workspace. Trusted jobs may use the host API.
+- **Interaction:** Streaming progress, Ask User, model selection and channel commands including `/new`, `/status` and `/session`. Feishu CardKit supports ordered updates, subdued final footers, stale-state cleanup and transient-failure recovery. Its progress refresh supports a 300 ms minimum (750 ms default); legacy Patch updates retain a separate 1200 ms minimum.
+- **Outbound messaging:** `channel_send` sends text to authorized bindings of the current session, and Feishu images/files from its workspace. Trusted jobs may use the host API. Feishu labels model-initiated sends with a turquoise **已发送** ("Sent") header, distinct from the green **已完成** ("Completed") header of an ordinary turn; distinct messages remain intact.
 - **Schedules and memory:** `/new` safely migrates active scheduled tasks; eligible sessions support log rotation. Durably bound groups/threads can share workspace memory through compatible memory plugins.
 
 ## Install and configure

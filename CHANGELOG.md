@@ -1,5 +1,14 @@
 # Changelog · Channel Core
 
+## 0.6.6 · 2026-11-21
+
+- Prevent Feishu card-state exhaustion by reclaiming abandoned 24-hour state, retiring linked question-card records together, and cleaning transient state after final delivery.
+- Recognize Feishu CardKit permission business errors with bounded cooldown/retry rather than repeated failing calls. If the final text update succeeds but remote stream close remains unconfirmed, report the uncertainty and continue delivering remaining cards.
+- Distinguish model `channel_send` deliveries with a turquoise **已发送 / Sent** card header, while native turn completions remain green **已完成 / Completed**. Preserve both distinct messages without speculative deduplication.
+- Let Feishu CardKit progress use a configurable **300 ms minimum** (750 ms default); protect the legacy Patch path at **1200 ms minimum**, including fallback, without slowing final answers, Ask User retirement or segment closure.
+- Keep settings save/validation errors visible in a sticky action bar; avoid false unsaved-change warnings for list whitespace and equivalent numeric input. Rebuild the bundled client.
+- Include expanded regressions for long messages, Steer boundaries, CardKit capacity/circuit breaker, safe fallback, progress cadence, and settings interactions.
+
 ## 0.6.5 · 2026-11-21
 
 - Serialize Feishu CardKit operations, coalesce obsolete progress frames, guard Steer boundaries, and avoid reporting unconfirmed stream closure as success.

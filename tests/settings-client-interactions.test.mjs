@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-function harness(){
+function harness(options={}){
  const slots=[],deps=[],effects=[];
  let cursor=0;
  const React={
@@ -30,7 +30,8 @@ function harness(){
  let snapshot={status:'ready',revision:'rev-1',writable:true,details:{},value:{
    allowedUsers:['owner'],throttleMs:750,flag:false,first:2,second:3,
  }};
- const scope={getSnapshot:()=>snapshot,subscribe:()=>noop,reload:async()=>snapshot};
+ const scope={getSnapshot:()=>snapshot,subscribe:()=>noop,reload:async()=>snapshot,
+   update:options.update??(async()=>{throw Error('simulated save rejected');})};
  function render(fields){
   cursor=0;effects.length=0;
   const tree=FileConfigPage({scope,fields,title:'test',description:'test',credentialsFirst:false});
@@ -115,7 +116,59 @@ test('both channel pages have one display fold and conditional attachment limit'
  assert.deepEqual(feishu.find(x=>x.key==='autoCollectGroups').when,{allowGroups:true});
  assert.equal(feishu.find(x=>x.key==='streaming.cardEngine').fold,'更多显示设置');
  const built=fs.readFileSync(new URL('../lib/client.js',import.meta.url),'utf8');
- assert.match(built,/dpc-save-actions\{position:sticky/);
+ assert.match(built,/dpc-save-bar\{position:sticky/);
  assert(!built.includes('NewsArchiveView'),'client bundle must not resurrect previously removed UI');
  assert(built.includes('dpc-prompt-editor'),'build preserves multiline default restore');
+});
+
+
+test('whitespace-only list edits are not dirty and raw text survives polling',()=>{
+ const h=harness(),fields=[{key:'allowedUsers',type:'list',group:'权限',label:'允许用户'}];
+ h.render(fields);let tree=h.render(fields);
+ const list=()=>h.walk(tree,n=>n.type==='textarea'&&n.props.id==='dsh-config-allowedUsers');
+ const status=()=>h.walk(tree,n=>n.props?.role==='status'&&n.children?.includes?.('尚未保存'));
+ list().props.onChange({target:{value:'owner\n'}});
+ tree=h.render(fields);
+ assert.equal(status(),null,'trailing newline alone must not flag a meaningful config change');
+ h.setSnapshot({...h.getSnapshot(),details:{message:'refreshed'}});
+ tree=h.render(fields);tree=h.render(fields);
+ assert.equal(list().props.value,'owner\n','background refresh cannot strip the editable newline');
+ list().props.onChange({target:{value:'owner\nanother'}});
+ tree=h.render(fields);
+ assert(status(),'adding a real list item must be dirty');
+});
+
+test('sticky save bar includes backend errors, conflicts, and save buttons in the same visible region',async()=>{
+ const h=harness(),fields=[{key:'allowedUsers',type:'list',group:'权限',label:'允许用户'}];
+ h.render(fields);let tree=h.render(fields);
+ const bar=()=>h.walk(tree,n=>n.props?.className==='dpc-save-bar');
+ const alerts=()=>h.walk(bar(),n=>n.props?.role==='alert');
+ assert(bar(),'sticky save bar exists');
+ assert(h.walk(bar(),n=>n.props?.className==='dpc-actions dpc-save-actions'),
+  'buttons must be nested in the same sticky bar');
+ const list=()=>h.walk(tree,n=>n.type==='textarea'&&n.props.id==='dsh-config-allowedUsers');
+ list().props.onChange({target:{value:'owner\nnew-user'}});
+ tree=h.render(fields);
+ tree.props.onSubmit({preventDefault(){}});
+ await new Promise(resolve=>setImmediate(resolve));
+ tree=h.render(fields);
+ assert(alerts(),'the server rejection must render inside the sticky region');
+ h.setSnapshot({...h.getSnapshot(),revision:'rev-external'});
+ tree=h.render(fields);
+ assert(bar().children.some(child=>child?.props?.role==='alert'),
+  'external revision conflicts must also remain visible in the sticky region');
+});
+
+
+test('equivalent numeric text does not flag dirty, but empty numeric input does',()=>{
+ const h=harness(),fields=[{key:'throttleMs',type:'number',group:'显示',label:'间隔',min:100,max:5000}];
+ h.render(fields);let tree=h.render(fields);
+ const number=()=>h.walk(tree,n=>n.type==='input'&&n.props.id==='dsh-config-throttleMs');
+ const isDirty=()=>!!h.walk(tree,n=>n.props?.role==='status'&&n.children?.includes?.('尚未保存'));
+ number().props.onChange({target:{value:'750.0'}});
+ tree=h.render(fields);
+ assert.equal(isDirty(),false,'equivalent number input must not count as a config mutation');
+ number().props.onChange({target:{value:''}});
+ tree=h.render(fields);
+ assert.equal(isDirty(),true,'invalid empty number must be visible as unsaved');
 });

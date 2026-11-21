@@ -37,9 +37,11 @@ test('the Feishu SDK receives an actual image source, never a fake Markdown card
 test('final card retries on SAME CardKit card without creating a second chat message',async()=>{
  const operations=[],record={streaming:true},payload={header:{title:{content:'completed'}}};
  const api={async close(){operations.push('close');throw Error('settings-not-ready')},async update(){operations.push('update')}};
- await assert.rejects(finalizeCardKitMessage(api,record,payload),/stream-close-failed/);
- assert.deepEqual(operations,['close','close','update'],'close must retry before best-effort final update');
+ const outcome=await finalizeCardKitMessage(api,record,payload);
+ assert.equal(outcome.finalContentUpdated,true);
+ assert.equal(outcome.streamClosed,false);
+ assert.deepEqual(operations,['close','close','update'],'close must retry before final update');
  assert.equal(record.streaming,true,'failed remote close must not be acknowledged locally');
  const errorApi={async close(){throw Error('failed')},async update(){throw Object.assign(Error('down'),{code:'KIT_FAILURE'})}};
- await assert.rejects(finalizeCardKitMessage(errorApi,{streaming:true},payload),/stream-close-failed/);
+ await assert.rejects(finalizeCardKitMessage(errorApi,{streaming:true},payload),{code:'KIT_FAILURE'});
 });
